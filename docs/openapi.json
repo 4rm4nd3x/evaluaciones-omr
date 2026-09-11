@@ -1,0 +1,2507 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Evaluaciones OMR API",
+    "description": "Servicio de evaluaciones con reconocimiento óptico de marcas (OMR).\n\n**Flujo principal**\n1. Crear una evaluación (banco de preguntas) → agregar secciones → cargar preguntas con `seccion_id`.\n2. Generar hojas: `POST /generar/{evaluacion_id}` con una selección **template** (reparto por\n   cantidad/porcentaje por sección) o **estructurada** (banco completo o subconjunto ordenado).\n   El `identificador` es opcional: si falta se autogenera (`{short_id}-{n}`) y la reimpresión\n   con el mismo identificador devuelve la misma variante.\n3. Escanear la hoja llena y evaluarla con `POST /evaluar` (califica contra el banco).\n\n**Hoja genérica (sin examen)**\n- `POST /generar/generica` genera solo burbujas (N preguntas × M opciones, 2–5).\n- `POST /leer` devuelve lo llenado (identificador persona + burbujas marcadas) sin contrastar nada.\n\nVer **Redoc** (`/redoc`) para la referencia completa o el esquema OpenAPI en `/openapi.json`.",
+    "contact": {
+      "name": "Evaluaciones OMR"
+    },
+    "license": {
+      "name": "Proprietary"
+    },
+    "version": "1.1.0"
+  },
+  "paths": {
+    "/api/v1/evaluacion": {
+      "post": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Crear Evaluacion",
+        "description": "Crea una evaluación (banco de preguntas). Genera un `short_id` único usado\ncomo prefijo del identificador autogenerado de las hojas (D4).",
+        "operationId": "crear_evaluacion_api_v1_evaluacion_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluacionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluacionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluaciones": {
+      "get": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Listar Evaluaciones",
+        "description": "Lista todas las evaluaciones (bancos de preguntas).",
+        "operationId": "listar_evaluaciones_api_v1_evaluaciones_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvaluacionResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Listar Evaluaciones Api V1 Evaluaciones Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluacion/{evaluacion_id}": {
+      "get": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Obtener Evaluacion",
+        "description": "Obtiene una evaluación por su id.",
+        "operationId": "obtener_evaluacion_api_v1_evaluacion__evaluacion_id__get",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluacionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Eliminar Evaluacion",
+        "description": "Elimina una evaluación y todo lo asociado (preguntas, secciones, hojas, resultados).",
+        "operationId": "eliminar_evaluacion_api_v1_evaluacion__evaluacion_id__delete",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluacion/{evaluacion_id}/secciones": {
+      "post": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Crear Secciones Batch",
+        "description": "Crea varias secciones en el banco de una evaluación (caso 1: reparto por secciones).",
+        "operationId": "crear_secciones_batch_api_v1_evaluacion__evaluacion_id__secciones_post",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeccionBatchCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SeccionResponse"
+                  },
+                  "title": "Response Crear Secciones Batch Api V1 Evaluacion  Evaluacion Id  Secciones Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Listar Secciones",
+        "description": "Lista las secciones de un banco, ordenadas por su `orden`.",
+        "operationId": "listar_secciones_api_v1_evaluacion__evaluacion_id__secciones_get",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SeccionResponse"
+                  },
+                  "title": "Response Listar Secciones Api V1 Evaluacion  Evaluacion Id  Secciones Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/seccion/{seccion_id}": {
+      "get": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Obtener Seccion",
+        "description": "Obtiene una sección del banco.",
+        "operationId": "obtener_seccion_api_v1_seccion__seccion_id__get",
+        "parameters": [
+          {
+            "name": "seccion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Seccion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeccionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Actualizar Seccion",
+        "description": "Actualiza nombre/descripción/orden de una sección.",
+        "operationId": "actualizar_seccion_api_v1_seccion__seccion_id__put",
+        "parameters": [
+          {
+            "name": "seccion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Seccion Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeccionUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SeccionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Eliminar Seccion",
+        "description": "Elimina una sección y sus preguntas (cascade).",
+        "operationId": "eliminar_seccion_api_v1_seccion__seccion_id__delete",
+        "parameters": [
+          {
+            "name": "seccion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Seccion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluacion/{evaluacion_id}/hojas": {
+      "get": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Listar Hojas",
+        "description": "Lista las hojas de respuestas generadas para una evaluación (recientes primero).",
+        "operationId": "listar_hojas_api_v1_evaluacion__evaluacion_id__hojas_get",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HojaRespuestaInfo"
+                  },
+                  "title": "Response Listar Hojas Api V1 Evaluacion  Evaluacion Id  Hojas Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluacion/{evaluacion_id}/preguntas/batch": {
+      "post": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Crear Preguntas Batch",
+        "description": "Carga preguntas en el banco. Cada pregunta debe tener entre 2 y 5 opciones (D6)\ny puede asociarse a una sección con `seccion_id` (o texto legacy `seccion`).",
+        "operationId": "crear_preguntas_batch_api_v1_evaluacion__evaluacion_id__preguntas_batch_post",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreguntaBatchCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PreguntaResponse"
+                  },
+                  "title": "Response Crear Preguntas Batch Api V1 Evaluacion  Evaluacion Id  Preguntas Batch Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluacion/{evaluacion_id}/preguntas": {
+      "get": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Listar Preguntas",
+        "description": "Lista las preguntas de un banco, ordenadas por (sección, orden).",
+        "operationId": "listar_preguntas_api_v1_evaluacion__evaluacion_id__preguntas_get",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PreguntaResponse"
+                  },
+                  "title": "Response Listar Preguntas Api V1 Evaluacion  Evaluacion Id  Preguntas Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pregunta/{pregunta_id}": {
+      "delete": {
+        "tags": [
+          "Banco de preguntas"
+        ],
+        "summary": "Eliminar Pregunta",
+        "description": "Elimina una pregunta del banco junto con sus opciones.",
+        "operationId": "eliminar_pregunta_api_v1_pregunta__pregunta_id__delete",
+        "parameters": [
+          {
+            "name": "pregunta_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Pregunta Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/generar/generica": {
+      "post": {
+        "tags": [
+          "Hoja genérica y lectura"
+        ],
+        "summary": "Generar Hoja Generica Endpoint",
+        "operationId": "generar_hoja_generica_endpoint_api_v1_generar_generica_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerarGenericaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerarGenericaResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/generica/{identificador}": {
+      "get": {
+        "tags": [
+          "Hoja genérica y lectura"
+        ],
+        "summary": "Obtener Hoja Generica",
+        "description": "Recupera una hoja genérica por identificador (PDF en base64, reimpresión).",
+        "operationId": "obtener_hoja_generica_api_v1_generica__identificador__get",
+        "parameters": [
+          {
+            "name": "identificador",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identificador"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerarGenericaResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Hoja genérica y lectura"
+        ],
+        "summary": "Eliminar Hoja Generica",
+        "description": "Elimina una hoja genérica y sus archivos de storage.",
+        "operationId": "eliminar_hoja_generica_api_v1_generica__identificador__delete",
+        "parameters": [
+          {
+            "name": "identificador",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identificador"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leer": {
+      "post": {
+        "tags": [
+          "Hoja genérica y lectura"
+        ],
+        "summary": "Leer Hoja Generica",
+        "description": "Lee una hoja genérica escaneada y devuelve lo llenado (sin contrastar).",
+        "operationId": "leer_hoja_generica_api_v1_leer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluarRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LecturaGenericaLoteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/generar/{evaluacion_id}": {
+      "post": {
+        "tags": [
+          "Generación de hojas de examen"
+        ],
+        "summary": "Generar Hoja",
+        "description": "Genera las hojas de un examen a partir del banco.\n\n**Selección**\n- `seleccion.tipo = \"template\"`: reparto por secciones con `cantidad` (exacto) o\n  `porcentaje` (proporción del total, redondeo por mayor resto). El total no puede\n  exceder el banco y siempre es exacto.\n- `seleccion.tipo = \"estructurada\"`: banco completo en su orden, o solo las preguntas\n  de `preguntas_orden` si se indica.\n\n**Identificador (D4)** — opcional. Si falta se genera `{short_id}-{n}`. Llamar de nuevo\ncon el mismo `identificador` devuelve la misma variante (reimpresión estable).\n\n**Respuesta**: PDF de burbujas + hoja de preguntas en base64, y `config_seleccion`\ncon el snapshot de la selección aplicada.",
+        "operationId": "generar_hoja_api_v1_generar__evaluacion_id__post",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerarHojaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenerarHojaResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluar": {
+      "post": {
+        "tags": [
+          "Evaluación de escaneos"
+        ],
+        "summary": "Evaluar Hoja",
+        "description": "Evalúa un escaneo (PDF de varias hojas o imagen) en base64.\nProcesa TODAS las páginas que contengan un QR válido (cada hoja se evalúa\npor separado, incluso si mezclan evaluaciones distintas); las páginas\nsin QR se ignoran y se reportan.",
+        "operationId": "evaluar_hoja_api_v1_evaluar_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluarRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultadoLoteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/resultados/{referencia}": {
+      "get": {
+        "tags": [
+          "Evaluación de escaneos"
+        ],
+        "summary": "Obtener Hoja Resultados",
+        "description": "Devuelve en base64 la hoja de resultados (clave con el llenado correcto\nde la hoja de respuestas) generada junto con las hojas.\n`referencia` acepta el identificador de la hoja ('Eva-2026-001') o su hoja_id (UUID).",
+        "operationId": "obtener_hoja_resultados_api_v1_resultados__referencia__get",
+        "parameters": [
+          {
+            "name": "referencia",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Referencia"
+            }
+          },
+          {
+            "name": "evaluacion_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          },
+          {
+            "name": "short_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Short Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HojaResultadoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/resultado/{resultado_id}": {
+      "get": {
+        "tags": [
+          "Evaluación de escaneos"
+        ],
+        "summary": "Obtener Resultado",
+        "description": "Devuelve un resultado completo: puntuación, detalle por pregunta (en el\norden del banco) y los archivos pdf_revisado / imagen_anotada en base64.",
+        "operationId": "obtener_resultado_api_v1_resultado__resultado_id__get",
+        "parameters": [
+          {
+            "name": "resultado_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Resultado Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultadoCompletoResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Evaluación de escaneos"
+        ],
+        "summary": "Eliminar Resultado",
+        "description": "Elimina un resultado y su detalle (los archivos en storage se conservan).",
+        "operationId": "eliminar_resultado_api_v1_resultado__resultado_id__delete",
+        "parameters": [
+          {
+            "name": "resultado_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Resultado Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evaluacion/{evaluacion_id}/resultados": {
+      "get": {
+        "tags": [
+          "Evaluación de escaneos"
+        ],
+        "summary": "Listar Resultados",
+        "description": "Lista los resultados de una evaluación (sin detalle), más recientes primero.",
+        "operationId": "listar_resultados_api_v1_evaluacion__evaluacion_id__resultados_get",
+        "parameters": [
+          {
+            "name": "evaluacion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Evaluacion Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResultadoResumenResponse"
+                  },
+                  "title": "Response Listar Resultados Api V1 Evaluacion  Evaluacion Id  Resultados Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Root",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "EvaluacionCreate": {
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nombre"
+        ],
+        "title": "EvaluacionCreate"
+      },
+      "EvaluacionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "short_id": {
+            "type": "string",
+            "title": "Short Id"
+          },
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "short_id",
+          "nombre",
+          "descripcion"
+        ],
+        "title": "EvaluacionResponse"
+      },
+      "EvaluarRequest": {
+        "properties": {
+          "pdf_escaneado_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Escaneado Base64"
+          },
+          "imagen_escaneada_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imagen Escaneada Base64"
+          },
+          "identificador": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador"
+          }
+        },
+        "type": "object",
+        "title": "EvaluarRequest"
+      },
+      "GenerarGenericaRequest": {
+        "properties": {
+          "identificador": {
+            "type": "string",
+            "title": "Identificador",
+            "description": "Identificador de la hoja genérica (único; la reimpresión con el mismo id devuelve la misma hoja)"
+          },
+          "cantidad_preguntas": {
+            "type": "integer",
+            "title": "Cantidad Preguntas",
+            "description": "Número de preguntas (filas de burbujas)"
+          },
+          "opciones": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Opciones",
+            "description": "Letras de opciones: 'ABCDE' o ['A','B','C'] (2-5 opciones)",
+            "default": "ABCDE"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identificador",
+          "cantidad_preguntas"
+        ],
+        "title": "GenerarGenericaRequest"
+      },
+      "GenerarGenericaResponse": {
+        "properties": {
+          "hoja_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Hoja Id"
+          },
+          "identificador": {
+            "type": "string",
+            "title": "Identificador"
+          },
+          "num_opciones": {
+            "type": "integer",
+            "title": "Num Opciones",
+            "description": "Cantidad de burbujas por pregunta (2-5)"
+          },
+          "qr_data": {
+            "type": "object",
+            "title": "Qr Data",
+            "description": "JSON embebido en el QR, p. ej. {\"tipo\": \"generica\", \"identificador\": \"GEN-001\"}"
+          },
+          "pdf_base64": {
+            "type": "string",
+            "title": "Pdf Base64",
+            "description": "PDF de la hoja de respuestas en base64"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hoja_id",
+          "identificador",
+          "num_opciones",
+          "qr_data",
+          "pdf_base64"
+        ],
+        "title": "GenerarGenericaResponse"
+      },
+      "GenerarHojaRequest": {
+        "properties": {
+          "identificador": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador",
+            "description": "Identificador de la hoja; si falta se genera '{short_id}-{n}' (D4). Misma (evaluación, identificador) → misma variante (reimpresión estable)."
+          },
+          "seleccion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SeleccionTemplate"
+              },
+              {
+                "$ref": "#/components/schemas/SeleccionEstructurada"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seleccion",
+            "description": "Configuración de selección (template | estructurada). Si se omite, se usa el banco completo en orden."
+          },
+          "cantidad_preguntas": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cantidad Preguntas",
+            "description": "Legacy: recorte del banco (equivale a un template sin secciones)"
+          },
+          "aleatorio": {
+            "type": "boolean",
+            "title": "Aleatorio",
+            "description": "Legacy: selección/orden aleatorios",
+            "default": false
+          },
+          "hojaPreguntas": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hojapreguntas",
+            "description": "PDF de preguntas (base64) cargado externamente — aún sin uso"
+          },
+          "hojaRespuestas": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hojarespuestas",
+            "description": "PDF de respuestas (base64) cargado externamente — aún sin uso"
+          }
+        },
+        "type": "object",
+        "title": "GenerarHojaRequest"
+      },
+      "GenerarHojaResponse": {
+        "properties": {
+          "hoja_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Hoja Id"
+          },
+          "identificador": {
+            "type": "string",
+            "title": "Identificador"
+          },
+          "qr_data": {
+            "type": "object",
+            "title": "Qr Data"
+          },
+          "pdf_base64": {
+            "type": "string",
+            "title": "Pdf Base64"
+          },
+          "hoja_preguntas_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hoja Preguntas Base64"
+          },
+          "cantidad_preguntas": {
+            "type": "integer",
+            "title": "Cantidad Preguntas",
+            "default": 0
+          },
+          "config_seleccion": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Seleccion"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hoja_id",
+          "identificador",
+          "qr_data",
+          "pdf_base64"
+        ],
+        "title": "GenerarHojaResponse"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HojaRespuestaInfo": {
+        "properties": {
+          "hoja_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Hoja Id"
+          },
+          "evaluacion_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Evaluacion Id"
+          },
+          "identificador": {
+            "type": "string",
+            "title": "Identificador"
+          },
+          "qr_data": {
+            "type": "object",
+            "title": "Qr Data"
+          },
+          "pdf_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Path"
+          },
+          "cantidad_preguntas": {
+            "type": "integer",
+            "title": "Cantidad Preguntas",
+            "default": 0
+          },
+          "config_seleccion": {
+            "anyOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Seleccion"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hoja_id",
+          "evaluacion_id",
+          "identificador",
+          "qr_data",
+          "pdf_path",
+          "created_at"
+        ],
+        "title": "HojaRespuestaInfo"
+      },
+      "HojaResultadoResponse": {
+        "properties": {
+          "identificador": {
+            "type": "string",
+            "title": "Identificador"
+          },
+          "evaluacion_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Evaluacion Id"
+          },
+          "cantidad_preguntas": {
+            "type": "integer",
+            "title": "Cantidad Preguntas",
+            "default": 0
+          },
+          "pdf_base64": {
+            "type": "string",
+            "title": "Pdf Base64"
+          }
+        },
+        "type": "object",
+        "required": [
+          "identificador",
+          "evaluacion_id",
+          "pdf_base64"
+        ],
+        "title": "HojaResultadoResponse"
+      },
+      "LecturaGenericaItem": {
+        "properties": {
+          "identificador": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador"
+          },
+          "identificador_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador Persona"
+          },
+          "cantidad_preguntas": {
+            "type": "integer",
+            "title": "Cantidad Preguntas"
+          },
+          "num_opciones": {
+            "type": "integer",
+            "title": "Num Opciones"
+          },
+          "respuestas": {
+            "items": {
+              "$ref": "#/components/schemas/RespuestaLecturaItem"
+            },
+            "type": "array",
+            "title": "Respuestas"
+          },
+          "imagen_anotada_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imagen Anotada Base64"
+          },
+          "qr_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Qr Codes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "cantidad_preguntas",
+          "num_opciones",
+          "respuestas",
+          "qr_codes"
+        ],
+        "title": "LecturaGenericaItem"
+      },
+      "LecturaGenericaLoteResponse": {
+        "properties": {
+          "total_paginas": {
+            "type": "integer",
+            "title": "Total Paginas"
+          },
+          "paginas_leidas": {
+            "type": "integer",
+            "title": "Paginas Leidas"
+          },
+          "paginas_ignoradas": {
+            "type": "integer",
+            "title": "Paginas Ignoradas"
+          },
+          "lecturas": {
+            "items": {
+              "$ref": "#/components/schemas/LecturaGenericaItem"
+            },
+            "type": "array",
+            "title": "Lecturas"
+          },
+          "errores": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Errores",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_paginas",
+          "paginas_leidas",
+          "paginas_ignoradas",
+          "lecturas"
+        ],
+        "title": "LecturaGenericaLoteResponse"
+      },
+      "OpcionCreate": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "es_correcta": {
+            "type": "boolean",
+            "title": "Es Correcta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "es_correcta"
+        ],
+        "title": "OpcionCreate"
+      },
+      "OpcionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "es_correcta": {
+            "type": "boolean",
+            "title": "Es Correcta"
+          },
+          "orden": {
+            "type": "integer",
+            "title": "Orden"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "key",
+          "label",
+          "es_correcta",
+          "orden"
+        ],
+        "title": "OpcionResponse"
+      },
+      "PreguntaBatchCreate": {
+        "properties": {
+          "preguntas": {
+            "items": {
+              "$ref": "#/components/schemas/PreguntaCreate"
+            },
+            "type": "array",
+            "title": "Preguntas"
+          }
+        },
+        "type": "object",
+        "required": [
+          "preguntas"
+        ],
+        "title": "PreguntaBatchCreate"
+      },
+      "PreguntaCreate": {
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "title": "Nombre",
+            "description": "Nombre corto de la pregunta (p. ej. 'pregunta_1')"
+          },
+          "tipo": {
+            "type": "string",
+            "title": "Tipo",
+            "description": "Tipo: 'single' (una respuesta) o 'multiple' (varias)",
+            "default": "single"
+          },
+          "enunciado": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enunciado",
+            "description": "Enunciado completo de la pregunta"
+          },
+          "opciones": {
+            "items": {
+              "$ref": "#/components/schemas/OpcionCreate"
+            },
+            "type": "array",
+            "title": "Opciones",
+            "description": "Opciones de respuesta (entre 2 y 5, D6)"
+          },
+          "orden": {
+            "type": "integer",
+            "title": "Orden",
+            "description": "Orden dentro de la sección/banco",
+            "default": 1
+          },
+          "puntos": {
+            "type": "number",
+            "title": "Puntos",
+            "description": "Puntos asignados si la pregunta es correcta",
+            "default": 1.0
+          },
+          "requerida": {
+            "type": "boolean",
+            "title": "Requerida",
+            "description": "Indica si la pregunta es obligatoria",
+            "default": false
+          },
+          "seccion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seccion",
+            "description": "Legacy: texto de sección (se crea/enlaza automáticamente)"
+          },
+          "seccion_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seccion Id",
+            "description": "Preferido: UUID de la sección (tabla 'secciones')"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nombre",
+          "opciones"
+        ],
+        "title": "PreguntaCreate"
+      },
+      "PreguntaResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "tipo": {
+            "type": "string",
+            "title": "Tipo"
+          },
+          "enunciado": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enunciado"
+          },
+          "orden": {
+            "type": "integer",
+            "title": "Orden"
+          },
+          "puntos": {
+            "type": "number",
+            "title": "Puntos"
+          },
+          "requerida": {
+            "type": "boolean",
+            "title": "Requerida"
+          },
+          "seccion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seccion"
+          },
+          "seccion_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seccion Id"
+          },
+          "opciones": {
+            "items": {
+              "$ref": "#/components/schemas/OpcionResponse"
+            },
+            "type": "array",
+            "title": "Opciones"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "nombre",
+          "tipo",
+          "enunciado",
+          "orden",
+          "puntos",
+          "requerida",
+          "seccion",
+          "opciones"
+        ],
+        "title": "PreguntaResponse"
+      },
+      "RespuestaDetalleResponse": {
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "pregunta_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Pregunta Id"
+          },
+          "respuesta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Respuesta"
+          },
+          "es_correcta": {
+            "type": "boolean",
+            "title": "Es Correcta"
+          },
+          "puntos_obtenidos": {
+            "type": "number",
+            "title": "Puntos Obtenidos"
+          }
+        },
+        "type": "object",
+        "required": [
+          "nombre",
+          "pregunta_id",
+          "respuesta",
+          "es_correcta",
+          "puntos_obtenidos"
+        ],
+        "title": "RespuestaDetalleResponse"
+      },
+      "RespuestaLecturaItem": {
+        "properties": {
+          "pregunta": {
+            "type": "integer",
+            "title": "Pregunta"
+          },
+          "opciones_seleccionadas": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Opciones Seleccionadas"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pregunta",
+          "opciones_seleccionadas"
+        ],
+        "title": "RespuestaLecturaItem"
+      },
+      "ResultadoCompletoResponse": {
+        "properties": {
+          "resultado_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resultado Id"
+          },
+          "evaluacion_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Evaluacion Id"
+          },
+          "identificador": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador"
+          },
+          "identificador_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador Persona"
+          },
+          "puntuacion_total": {
+            "type": "number",
+            "title": "Puntuacion Total"
+          },
+          "total_preguntas": {
+            "type": "integer",
+            "title": "Total Preguntas"
+          },
+          "respuestas_correctas": {
+            "type": "integer",
+            "title": "Respuestas Correctas"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "respuestas": {
+            "items": {
+              "$ref": "#/components/schemas/RespuestaDetalleResponse"
+            },
+            "type": "array",
+            "title": "Respuestas"
+          },
+          "pdf_revisado_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Revisado Base64"
+          },
+          "imagen_anotada_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imagen Anotada Base64"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resultado_id",
+          "evaluacion_id",
+          "puntuacion_total",
+          "total_preguntas",
+          "respuestas_correctas",
+          "created_at",
+          "respuestas"
+        ],
+        "title": "ResultadoCompletoResponse",
+        "description": "Resultado completo con el detalle por pregunta y los archivos en base64."
+      },
+      "ResultadoLoteResponse": {
+        "properties": {
+          "total_paginas": {
+            "type": "integer",
+            "title": "Total Paginas"
+          },
+          "paginas_evaluadas": {
+            "type": "integer",
+            "title": "Paginas Evaluadas"
+          },
+          "paginas_ignoradas": {
+            "type": "integer",
+            "title": "Paginas Ignoradas"
+          },
+          "resultados": {
+            "items": {
+              "$ref": "#/components/schemas/ResultadoResponse"
+            },
+            "type": "array",
+            "title": "Resultados"
+          },
+          "errores": {
+            "items": {
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Errores",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_paginas",
+          "paginas_evaluadas",
+          "paginas_ignoradas",
+          "resultados"
+        ],
+        "title": "ResultadoLoteResponse",
+        "description": "Resultado de evaluar un escaneo: cada página con QR válido produce\nun resultado propio; las páginas sin QR se reportan en errores."
+      },
+      "ResultadoResponse": {
+        "properties": {
+          "resultado_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resultado Id"
+          },
+          "identificador": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador"
+          },
+          "identificador_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador Persona"
+          },
+          "puntuacion_total": {
+            "type": "number",
+            "title": "Puntuacion Total"
+          },
+          "total_preguntas": {
+            "type": "integer",
+            "title": "Total Preguntas"
+          },
+          "respuestas_correctas": {
+            "type": "integer",
+            "title": "Respuestas Correctas"
+          },
+          "respuestas": {
+            "items": {
+              "$ref": "#/components/schemas/RespuestaDetalleResponse"
+            },
+            "type": "array",
+            "title": "Respuestas"
+          },
+          "pdf_revisado_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pdf Revisado Base64"
+          },
+          "imagen_anotada_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imagen Anotada Base64"
+          },
+          "qr_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Qr Codes"
+          },
+          "storage_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resultado_id",
+          "identificador",
+          "puntuacion_total",
+          "total_preguntas",
+          "respuestas_correctas",
+          "respuestas",
+          "qr_codes"
+        ],
+        "title": "ResultadoResponse"
+      },
+      "ResultadoResumenResponse": {
+        "properties": {
+          "resultado_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Resultado Id"
+          },
+          "evaluacion_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Evaluacion Id"
+          },
+          "identificador": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador"
+          },
+          "identificador_persona": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identificador Persona"
+          },
+          "puntuacion_total": {
+            "type": "number",
+            "title": "Puntuacion Total"
+          },
+          "total_preguntas": {
+            "type": "integer",
+            "title": "Total Preguntas"
+          },
+          "respuestas_correctas": {
+            "type": "integer",
+            "title": "Respuestas Correctas"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resultado_id",
+          "evaluacion_id",
+          "puntuacion_total",
+          "total_preguntas",
+          "respuestas_correctas",
+          "created_at"
+        ],
+        "title": "ResultadoResumenResponse",
+        "description": "Resumen de un resultado (para listados)."
+      },
+      "SeccionBatchCreate": {
+        "properties": {
+          "secciones": {
+            "items": {
+              "$ref": "#/components/schemas/SeccionCreate"
+            },
+            "type": "array",
+            "title": "Secciones",
+            "description": "Lista de secciones a crear"
+          }
+        },
+        "type": "object",
+        "required": [
+          "secciones"
+        ],
+        "title": "SeccionBatchCreate"
+      },
+      "SeccionCreate": {
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "title": "Nombre",
+            "description": "Nombre de la sección (p. ej. 'Álgebra')"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion",
+            "description": "Descripción libre de la sección"
+          },
+          "orden": {
+            "type": "integer",
+            "title": "Orden",
+            "description": "Posición en que se imprime la sección dentro del banco",
+            "default": 1
+          }
+        },
+        "type": "object",
+        "required": [
+          "nombre"
+        ],
+        "title": "SeccionCreate"
+      },
+      "SeccionQuota": {
+        "properties": {
+          "seccion_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Seccion Id",
+            "description": "UUID de la sección del banco"
+          },
+          "cantidad": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cantidad",
+            "description": "Número exacto de preguntas de esta sección"
+          },
+          "porcentaje": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Porcentaje",
+            "description": "Porcentaje del total para esta sección (redondeo por mayor resto)"
+          }
+        },
+        "type": "object",
+        "required": [
+          "seccion_id"
+        ],
+        "title": "SeccionQuota"
+      },
+      "SeccionResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "nombre": {
+            "type": "string",
+            "title": "Nombre"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion"
+          },
+          "orden": {
+            "type": "integer",
+            "title": "Orden"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "nombre",
+          "descripcion",
+          "orden"
+        ],
+        "title": "SeccionResponse"
+      },
+      "SeccionUpdate": {
+        "properties": {
+          "nombre": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nombre",
+            "description": "Nuevo nombre de la sección"
+          },
+          "descripcion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Descripcion",
+            "description": "Nueva descripción"
+          },
+          "orden": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orden",
+            "description": "Nueva posición (secciones mayores se desplazan)"
+          }
+        },
+        "type": "object",
+        "title": "SeccionUpdate"
+      },
+      "SeleccionEstructurada": {
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "estructurada"
+            ],
+            "const": "estructurada",
+            "title": "Tipo",
+            "description": "Banco completo en su orden (o subconjunto ordenado)"
+          },
+          "preguntas_orden": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preguntas Orden",
+            "description": "Subconjunto explícito de preguntas en orden; si falta, se usa todo el banco"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tipo"
+        ],
+        "title": "SeleccionEstructurada"
+      },
+      "SeleccionTemplate": {
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "template"
+            ],
+            "const": "template",
+            "title": "Tipo",
+            "description": "Selección por secciones (cantidad/porcentaje)"
+          },
+          "cantidad_preguntas": {
+            "type": "integer",
+            "title": "Cantidad Preguntas",
+            "description": "Total de preguntas a imprimir (debe estar entre 1 y el tamaño del banco)"
+          },
+          "secciones": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SeccionQuota"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secciones",
+            "description": "Reparto por sección: cada item con 'cantidad' o 'porcentaje'"
+          },
+          "aleatorio": {
+            "type": "boolean",
+            "title": "Aleatorio",
+            "description": "Si true, selección y orden aleatorios (secciones intercaladas)",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "tipo",
+          "cantidad_preguntas"
+        ],
+        "title": "SeleccionTemplate"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Banco de preguntas",
+      "description": "Evaluaciones (bancos), secciones y preguntas. Las secciones agrupan preguntas y permiten seleccionar por cantidad/porcentaje al generar una hoja."
+    },
+    {
+      "name": "Generación de hojas de examen",
+      "description": "Genera hojas de respuestas (con su hoja de preguntas y clave) a partir de un banco, con selección **template** (cantidad/porcentaje por sección) o **estructurada** (subconjunto ordenado o banco completo)."
+    },
+    {
+      "name": "Hoja genérica y lectura",
+      "description": "Hoja de respuestas genérica (solo burbujas N×M, sin examen) y lectura de lo llenado en un escaneo, sin contrastar contra un banco."
+    },
+    {
+      "name": "Evaluación de escaneos",
+      "description": "Evalúa hojas escaneadas contra el banco (coordenadas conocidas) y consulta de resultados."
+    }
+  ]
+}

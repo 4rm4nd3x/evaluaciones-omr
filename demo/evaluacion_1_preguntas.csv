@@ -1,0 +1,51 @@
+nombre,tipo,enunciado,opcion_a,opcion_b,opcion_c,opcion_d,opcion_e,correcta,orden,puntos,seccion
+pregunta_1,single,"¿Cuánto es 2 + 3? Realiza la suma de los dos números indicados.",El resultado es 2,El resultado es 1,El resultado es 5,El resultado es 4,El resultado es 3,C,1,1.0,Operaciones Básicas
+pregunta_2,single,"¿Cuánto es 7 multiplicado por 8? Calcula el producto de ambos factores.",48 es el producto,54 es el producto,56 es el producto,63 es el producto,64 es el producto,C,2,1.0,Operaciones Básicas
+pregunta_3,single,"¿Cuál es la raíz cuadrada exacta de 144? Busca un número que multiplicado por sí mismo dé 144.",10 porque 10x10=100,11 porque 11x11=121,12 porque 12x12=144,13 porque 13x13=169,14 porque 14x14=196,C,3,1.0,Operaciones Básicas
+pregunta_4,single,"¿Cuánto es 15 dividido entre 3? Realiza la división entera.",3 es el cociente,4 es el cociente,5 es el cociente,6 es el cociente,7 es el cociente,C,4,1.0,Operaciones Básicas
+pregunta_5,single,"¿Cuánto representa el 25% de 200? Calcula la cuarta parte de 200.",20 es el 25%,40 es el 25%,50 es el 25%,60 es el 25%,65 es el 25%,C,5,1.0,Operaciones Básicas
+pregunta_6,single,"¿Cuánto es 3 elevado al cubo? Calcula 3 x 3 x 3.",9 es el cubo,18 es el cubo,27 es el cubo,36 es el cubo,81 es el cubo,C,6,1.0,Potencias
+pregunta_7,single,"¿Cuánto es 100 menos 37? Realiza la resta indicada.",53 es el resultado,63 es el resultado,73 es el resultado,83 es el resultado,93 es el resultado,B,7,1.0,Operaciones Básicas
+pregunta_8,single,"¿Cuál es el factorial de 5? Multiplica 5 x 4 x 3 x 2 x 1.",25 es el factorial,60 es el factorial,100 es el factorial,120 es el factorial,720 es el factorial,D,8,1.0,Factoriales
+pregunta_9,single,"¿Cuánto es 144 dividido entre 12? Realiza la división exacta.",10 es el cociente,11 es el cociente,12 es el cociente,13 es el cociente,14 es el cociente,C,9,1.0,Operaciones Básicas
+pregunta_10,single,"¿Cuánto es 9 multiplicado por 9? Calcula el cuadrado de 9.",72 es el cuadrado,81 es el cuadrado,90 es el cuadrado,89 es el cuadrado,99 es el cuadrado,B,10,1.0,Potencias
+pregunta_11,single,"¿Cuál es el valor de pi redondeado a dos decimales? Identifica el número常数.",3.12 es pi,3.14 es pi,3.16 es pi,3.18 es pi,3.20 es pi,B,11,1.0,Constantes
+pregunta_12,single,"¿Cuánto es 2 elevado a la potencia 10? Calcula 2 multiplicado por sí mismo 10 veces.",256 es 2^10,512 es 2^10,1024 es 2^10,2048 es 2^10,4096 es 2^10,C,12,1.0,Potencias
+pregunta_13,single,"¿Cuál es el mínimo común múltiplo de 4 y 6? El menor número divisible por ambos.",10 es el MCM,12 es el MCM,18 es el MCM,24 es el MCM,36 es el MCM,B,13,1.0,Números
+pregunta_14,single,"¿Cuánto es 2.5 multiplicado por 4? Multiplica el número decimal por 4.",8 es el producto,9 es el producto,10 es el producto,11 es el producto,12 es el producto,C,14,1.0,Operaciones Decimales
+pregunta_15,single,"¿Cuál es el máximo común divisor de 12 y 18? El mayor número que divide a ambos.",3 es el MCD,4 es el MCD,6 es el MCD,9 es el MCD,12 es el MCD,C,15,1.0,Números
+pregunta_16,single,"¿Cuánto es -5 más 8? Suma los dos números, considerando el signo negativo.",2 es la suma,3 es la suma,4 es la suma,5 es la suma,-3 es la suma,B,16,1.0,Números Enteros
+pregunta_17,single,"¿Cuánto es 3 dividido entre 4 expresado en decimal? Convierte la fracción a decimal.",0.25 es el decimal,0.33 es el decimal,0.50 es el decimal,0.75 es el decimal,0.80 es el decimal,D,17,1.0,Fracciones
+pregunta_18,single,"¿Cuánto es 1000 dividido entre 8? Realiza la división exacta.",100 es el cociente,110 es el cociente,120 es el cociente,125 es el cociente,150 es el cociente,D,18,1.0,Operaciones Básicas
+pregunta_19,single,"¿Cuál es el doble de 17? Multiplica 17 por 2.",24 es el doble,30 es el doble,34 es el doble,38 es el doble,42 es el doble,C,19,1.0,Operaciones Básicas
+pregunta_20,single,"¿Cuánto es 6 elevado al cuadrado? Calcula 6 x 6.",12 es el cuadrado,24 es el cuadrado,36 es el cuadrado,48 es el cuadrado,64 es el cuadrado,C,20,1.0,Potencias
+pregunta_21,multiple,"¿Cuáles de los siguientes números son primos? Selecciona TODOS los que correspondan.",2 es primo,4 NO es primo,3 es primo,6 NO es primo,5 es primo,ACE,21,2.0,Números Primos
+pregunta_22,single,"¿Cuánto es 23 más 47? Suma los dos números indicados.",60 es la suma,68 es la suma,70 es la suma,72 es la suma,80 es la suma,C,22,1.0,Operaciones Básicas
+pregunta_23,single,"¿Qué número falta en la sucesión 2, 4, 8, 16? Cada término se duplica.",24 sigue la secuencia,32 sigue la secuencia,48 sigue la secuencia,64 sigue la secuencia,128 sigue la secuencia,B,23,1.0,Secuencias
+pregunta_24,single,"¿Cuánto es 15 multiplicado por 15? Calcula el cuadrado de 15.",150 es el cuadrado,200 es el cuadrado,225 es el cuadrado,250 es el cuadrado,300 es el cuadrado,C,24,1.0,Potencias
+pregunta_25,single,"¿Cuál es la tercera parte de 90? Divide 90 entre 3.",20 es la tercera parte,25 es la tercera parte,30 es la tercera parte,35 es la tercera parte,40 es la tercera parte,C,25,1.0,Fracciones
+pregunta_26,single,"¿Cuánto es 50 menos 18? Realiza la resta indicada.",22 es el resultado,32 es el resultado,38 es el resultado,42 es el resultado,48 es el resultado,B,26,1.0,Operaciones Básicas
+pregunta_27,single,"¿Cuánto es 7 más 8 multiplicado por 2? Recuerda el orden de operaciones.",22 es el resultado,30 es el resultado,38 es el resultado,23 es el resultado,15 es el resultado,B,27,1.0,Orden de Operaciones
+pregunta_28,single,"¿Cuál es la mitad de 78? Divide 78 entre 2.",34 es la mitad,36 es la mitad,38 es la mitad,39 es la mitad,42 es la mitad,D,28,1.0,Fracciones
+pregunta_29,single,"¿Cuánto es 11 multiplicado por 11? Calcula el cuadrado de 11.",111 es el cuadrado,121 es el cuadrado,131 es el cuadrado,141 es el cuadrado,122 es el cuadrado,B,29,1.0,Potencias
+pregunta_30,single,"¿Cuánto es 1000 menos 456? Realiza la resta indicada.",444 es el resultado,544 es el resultado,554 es el resultado,644 es el resultado,656 es el resultado,B,30,1.0,Operaciones Básicas
+pregunta_31,single,"¿Cuál es la cuarta parte de 100? Divide 100 entre 4.",20 es la cuarta parte,22 es la cuarta parte,25 es la cuarta parte,28 es la cuarta parte,30 es la cuarta parte,C,31,1.0,Fracciones
+pregunta_32,single,"¿Cuánto es 18 dividido entre 3 más 4? Primero divide, luego suma.",8 es el resultado,10 es el resultado,12 es el resultado,14 es el resultado,16 es el resultado,B,32,1.0,Orden de Operaciones
+pregunta_33,single,"¿Cuál de los siguientes números es primo? Solo un número tiene exactamente dos divisores.",9 NO es primo,17 SÍ es primo,15 NO es primo,21 NO es primo,25 NO es primo,B,33,1.0,Números Primos
+pregunta_34,single,"¿Cuánto es 3.14 multiplicado por 2? Multiplica el valor de pi por 2.",6.14 es el producto,6.28 es el producto,6.42 es el producto,6.56 es el producto,6.70 es el producto,B,34,1.0,Operaciones Decimales
+pregunta_35,single,"¿Cuál es el resto de dividir 17 entre 5? Calcula el residuo de la división.",1 es el resto,2 es el resto,3 es el resto,4 es el resto,0 es el resto,B,35,1.0,División con Resto
+pregunta_36,single,"¿Cuánto es 2 elevado a la potencia 8? Calcula 2 multiplicado por sí mismo 8 veces.",128 es 2^8,256 es 2^8,512 es 2^8,1024 es 2^8,64 es 2^8,B,36,1.0,Potencias
+pregunta_37,single,"¿Qué es un número irracional? Selecciona la mejor definición.",Es la mitad de uno,Es 0.5 en decimal,Es la raíz cuadrada de 2,Es 2/3 en decimal,Es 3/4 en decimal,C,37,1.0,Tipos de Números
+pregunta_38,single,"¿Cuánto es el 30% de 150? Calcula el 30 por ciento de 150.",30 es el 30%,40 es el 30%,50 es el 30%,55 es el 30%,60 es el 30%,C,38,1.0,Porcentajes
+pregunta_39,single,"¿Cuánto es 7 elevado al cubo? Calcula 7 x 7 x 7.",343 es el cubo,49 es el cubo,243 es el cubo,729 es el cubo,343 es el cubo,A,39,1.0,Potencias
+pregunta_40,single,"¿Cuál es el seno de 90 grados? Recuerda los valores trigonométricos básicos.",0 es seno 90,0.5 es seno 90,1 es seno 90,-1 es seno 90,0.75 es seno 90,C,40,1.0,Trigonometría
+pregunta_41,single,"¿Cuánto es 10 factorial dividido por 9 factorial? Simplifica la expresión.",5 es el resultado,9 es el resultado,10 es el resultado,45 es el resultado,362880 es el resultado,C,41,1.0,Factoriales
+pregunta_42,single,"¿Cuál es el cociente de dividir 85 entre 5? Realiza la división exacta.",15 es el cociente,17 es el cociente,19 es el cociente,21 es el cociente,23 es el cociente,B,42,1.0,Operaciones Básicas
+pregunta_43,single,"¿Cuánto es 25 multiplicado por 4? Calcula el producto de ambos factores.",75 es el producto,90 es el producto,100 es el producto,110 es el producto,125 es el producto,C,43,1.0,Operaciones Básicas
+pregunta_44,single,"¿Qué tipo de número es el cero? Clasifícalo correctamente entre las opciones dadas.",Natural no es cero,Enter sí es cero,Irracional no es cero,Imaginario no es cero,Ninguno de estos,B,44,1.0,Tipos de Números
+pregunta_45,single,"¿Cuánto es 6 al cuadrado menos 5 al cuadrado? Calcula cada cuadrado y luego resta.",1 es la diferencia,11 es la diferencia,15 es la diferencia,36 es la diferencia,61 es la diferencia,B,45,1.0,Potencias
+pregunta_46,single,"¿Cuál es la raíz cúbica de 27? Busca un número que al cubo dé 27.",3 porque 3^3=27,9 porque 9^3=729,18 porque 18^3=5832,27 porque 27^3=19683,81 porque 81^3=531441,A,46,1.0,Raíces
+pregunta_47,single,"¿Cuánto es 2.0 multiplicado por 3.0 más 1.0? Multiplica primero, luego suma.",5.0 es el resultado,6.0 es el resultado,7.0 es el resultado,8.0 es el resultado,9.0 es el resultado,C,47,1.0,Operaciones Decimales
+pregunta_48,single,"¿Cuánto es 100 dividido entre 4 más 3? Divide primero, luego suma.",25 es el resultado,28 es el resultado,30 es el resultado,33 es el resultado,28 es el resultado,B,48,1.0,Orden de Operaciones
+pregunta_49,single,"¿Cuál de los siguientes números NO es par? Identifica el número impar.",2 es par,4 es par,7 NO es par,8 es par,10 es par,C,49,1.0,Par e Impar
+pregunta_50,single,"¿Cuánto es 11 más 22 más 33? Suma los tres números indicados.",55 es la suma,66 es la suma,77 es la suma,88 es la suma,99 es la suma,B,50,1.0,Operaciones Básicas

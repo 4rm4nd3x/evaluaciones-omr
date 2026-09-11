@@ -1,0 +1,31 @@
+# Postgres corre en OTRO servidor: no hay servicio db aqui.
+# Configurar la conexion en el archivo .env (ver .env.example):
+#   DATABASE_URL=postgresql://usuario:password@SERVIDOR_EXTERNO:5432/evaluaciones
+#
+# La app crea/migra las tablas automaticamente al arrancar (idempotente).
+# NO ejecuta db_setup.py (destruye datos).
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      # Sobrescribe lo que venga en .env para asegurar consistencia interna
+      STORAGE_PATH: /data
+    volumes:
+      - evaluaciones_data:/data
+      # Para conservar los PDFs en el host, usar bind mount en su lugar:
+      # - ./storage:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/docs', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  evaluaciones_data:

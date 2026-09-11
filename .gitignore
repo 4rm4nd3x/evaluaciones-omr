@@ -1,0 +1,35 @@
+# Entorno virtual
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Variables de entorno (contiene credenciales)
+.env
+
+# Archivos generados / salidas
+demo/output/
+storage/
+*.pdf
+*.png
+*.jpg
+*.jpeg
+
+# Respaldos de base de datos
+*.dump
+*.sql.gz
+
+# Logs
+*.log
+
+# IDEs / editores
+.vscode/
+.idea/
+*.swp
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
