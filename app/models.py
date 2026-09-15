@@ -59,6 +59,7 @@ class Pregunta(Base):
     puntos = Column(Float, nullable=False, default=1.0)
     requerida = Column(Boolean, nullable=False, default=False)
     seccion = Column(String(255), nullable=True)  # legacy: texto; prefiera seccion_obj
+    activa = Column(Boolean, nullable=False, default=True, server_default="true")
 
     evaluacion = relationship("Evaluacion", back_populates="preguntas")
     seccion_obj = relationship("Seccion", back_populates="preguntas")

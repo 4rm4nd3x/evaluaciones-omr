@@ -76,6 +76,21 @@ class PreguntaCreate(BaseModel):
     requerida: bool = Field(False, description="Indica si la pregunta es obligatoria")
     seccion: Optional[str] = Field(None, description="Legacy: texto de sección (se crea/enlaza automáticamente)")
     seccion_id: Optional[UUID] = Field(None, description="Preferido: UUID de la sección (tabla 'secciones')")
+    activa: bool = Field(True, description="Si false, la pregunta queda desactivada (no se imprime en hojas nuevas)")
+
+
+class PreguntaUpdate(BaseModel):
+    """Actualización parcial de una pregunta. Todos los campos son opcionales."""
+    nombre: Optional[str] = Field(None, description="Nuevo nombre corto de la pregunta")
+    tipo: Optional[str] = Field(None, description="Tipo: 'single' (una respuesta) o 'multiple' (varias)")
+    enunciado: Optional[str] = Field(None, description="Nuevo enunciado completo de la pregunta")
+    opciones: Optional[List[OpcionCreate]] = Field(None, description="Reemplaza las opciones actuales (entre 2 y 5, D6)")
+    orden: Optional[int] = Field(None, description="Nuevo orden dentro de la sección/banco")
+    puntos: Optional[float] = Field(None, description="Nuevos puntos asignados si la pregunta es correcta")
+    requerida: Optional[bool] = Field(None, description="Indica si la pregunta es obligatoria")
+    seccion: Optional[str] = Field(None, description="Legacy: texto de sección (se crea/enlaza automáticamente)")
+    seccion_id: Optional[UUID] = Field(None, description="Preferido: UUID de la sección (tabla 'secciones')")
+    activa: Optional[bool] = Field(None, description="Desactivar (false) la excluye de hojas nuevas sin borrar su historial")
 
 
 class PreguntaBatchCreate(BaseModel):
@@ -90,6 +105,7 @@ class PreguntaResponse(BaseModel):
     orden: int
     puntos: float
     requerida: bool
+    activa: bool
     seccion: Optional[str]          # legacy
     seccion_id: Optional[UUID] = None
     opciones: List[OpcionResponse]
@@ -138,6 +154,7 @@ class GenerarHojaResponse(BaseModel):
     qr_data: dict
     pdf_base64: str
     hoja_preguntas_base64: Optional[str] = None
+    hojas_resultado_base64: Optional[str] = None
     cantidad_preguntas: int = 0
     config_seleccion: Optional[dict] = None
 

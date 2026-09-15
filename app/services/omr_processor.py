@@ -606,7 +606,12 @@ def _process_answer_column(
 
 
 def detect_corner_marks(image: np.ndarray) -> Optional[Dict]:
-    """Detecta las 4 marcas de esquina en la imagen."""
+    """Detecta las marcas de esquina (3 o mas) en la imagen.
+
+    Tolera escaneos en los que una esquina quede fuera del marco o cortada
+    (p.ej. hoja Letter escaneada como A4): con al menos 3 marcas se puede
+    estimar una transformacion afin. Los falsos positivos (QR, burbujas de
+    ejemplo) se descartan por error de reproyeccion sobre la similitud."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
     h, w = gray.shape
 
@@ -629,8 +634,15 @@ def detect_corner_marks(image: np.ndarray) -> Optional[Dict]:
                 cy = int(M["m01"] / M["m00"])
                 candidates.append((cx, cy, area))
 
-    if len(candidates) < 4:
-        return None
+    # Rectangulo nominal de las marcas en marco hoja (@SCALE_3X)
+    m, s = MARCA_MARGEN_PX, MARCA_LADO_PX
+    NW, NH = 1836, 2376
+    nominales = {
+        "top_left": np.float32([m + s / 2, m + s / 2]),
+        "top_right": np.float32([NW - m - s / 2, m + s / 2]),
+        "bottom_right": np.float32([NW - m - s / 2, NH - m - s / 2]),
+        "bottom_left": np.float32([m + s / 2, NH - m - s / 2]),
+    }
 
     corner_positions = {
         "top_left": (0, 0),
@@ -639,25 +651,12 @@ def detect_corner_marks(image: np.ndarray) -> Optional[Dict]:
         "bottom_right": (w, h),
     }
 
-    if len(candidates) < 4:
-        return None
-
-    # Rectangulo nominal de las marcas en marco hoja (@SCALE_3X)
-    m, s = MARCA_MARGEN_PX, MARCA_LADO_PX
-    NW, NH = 1836, 2376
-    nominales = np.float32([
-        [m + s / 2, m + s / 2],
-        [NW - m - s / 2, m + s / 2],
-        [NW - m - s / 2, NH - m - s / 2],
-        [m + s / 2, NH - m - s / 2],
-    ])
-
     # Candidatos cercanos a cada esquina (radio generoso para inclinaciones
     # grandes); los falsos positivos (QR, burbujas de ejemplo) se descartan
     # luego por consistencia geometrica.
     radio = 0.20 * min(h, w)
     orden_esquinas = ("top_left", "top_right", "bottom_right", "bottom_left")
-    por_esquina = []
+    por_esquina = {}
     for corner_name in orden_esquinas:
         tx_, ty_ = corner_positions[corner_name]
         cerca = [
@@ -666,29 +665,38 @@ def detect_corner_marks(image: np.ndarray) -> Optional[Dict]:
             if (cx - tx_) ** 2 + (cy - ty_) ** 2 <= radio * radio
         ]
         if not cerca:
-            return None
+            continue
         cerca.sort(key=lambda t: t[1])
-        por_esquina.append([i for i, _d in cerca[:4]])
+        por_esquina[corner_name] = [i for i, _d in cerca[:4]]
 
-    # Probar combinaciones y quedarse con la de menor error de reproyeccion
+    # Se necesita al menos 3 esquinas con candidatos
+    if len(por_esquina) < 3:
+        return None
+
+    # Probar combinaciones y quedarse con la de menor error de reproyeccion.
+    # Con 4 esquinas la similitud es sobre-determinada; con 3 pasa a ser de
+    # minimos cuadrados, y el error separa las marcas reales de los falsos
+    # positivos (el acierto real queda muy por debajo del umbral).
     import itertools
+    nombres = list(por_esquina.keys())
     mejor = None
     mejor_err = float("inf")
-    for combo in itertools.product(*por_esquina):
-        if len(set(combo)) < 4:
+    for combo in itertools.product(*[por_esquina[n] for n in nombres]):
+        if len(set(combo)) < len(nombres):
             continue
         det_pts = np.float32([[candidates[i][0], candidates[i][1]] for i in combo])
+        dst_pts = np.float32([nominales[n] for n in nombres])
         try:
-            A_, _ = cv2.estimateAffinePartial2D(det_pts, nominales)
+            A_, _ = cv2.estimateAffinePartial2D(det_pts, dst_pts)
         except cv2.error:
             continue
         if A_ is None:
             continue
         reproj = (A_[:, :2] @ det_pts.T).T + A_[:, 2]
-        err = float(np.mean(np.linalg.norm(reproj - nominales, axis=1)))
+        err = float(np.mean(np.linalg.norm(reproj - dst_pts, axis=1)))
         if err < mejor_err:
             mejor_err = err
-            mejor = {n: tuple(candidates[i]) for n, i in zip(orden_esquinas, combo)}
+            mejor = {n: tuple(candidates[i]) for n, i in zip(nombres, combo)}
 
     return mejor if mejor is not None and mejor_err <= 8.0 else None
 
@@ -792,38 +800,46 @@ def enderezar_imagen(image: np.ndarray, nominal_size: Tuple[int, int] = (1836, 2
 
     A = None
     angulo = 0.0
-    if corners and len(corners) == 4:
+    if corners and len(corners) >= 3:
         orden = ("top_left", "top_right", "bottom_right", "bottom_left")
         nw, nh = nominal_size
         m = MARCA_MARGEN_PX
         s = MARCA_LADO_PX
-        nominales = np.float32([
-            [m + s / 2, m + s / 2],
-            [nw - m - s / 2, m + s / 2],
-            [nw - m - s / 2, nh - m - s / 2],
-            [m + s / 2, nh - m - s / 2],
-        ])
-        detectadas = np.float32([
-            [corners[k][0], corners[k][1]] for k in orden
-        ])
+        nominales = {
+            "top_left": np.float32([m + s / 2, m + s / 2]),
+            "top_right": np.float32([nw - m - s / 2, m + s / 2]),
+            "bottom_right": np.float32([nw - m - s / 2, nh - m - s / 2]),
+            "bottom_left": np.float32([m + s / 2, nh - m - s / 2]),
+        }
+        presentes = [k for k in orden if k in corners]
+        detectadas = np.float32([[corners[k][0], corners[k][1]] for k in presentes])
+        nominales_pts = np.float32([nominales[k] for k in presentes])
+
+        # Similitud (escala+rot+traslacion) sobre las esquinas disponibles.
+        # Si solo hay 3, es un ajuste por minimos cuadrados que sigue siendo
+        # muy preciso y tolera que una esquina este fuera del marco.
         try:
-            A, _ = cv2.estimateAffinePartial2D(detectadas, nominales)
+            A, _ = cv2.estimateAffinePartial2D(detectadas, nominales_pts)
         except cv2.error:
             A = None
         # Validar por reproyeccion: si los candidatos no forman el rectangulo
         # nominal (p.ej. falsos positivos del QR), descartar la transformacion
         if A is not None:
             reproj = (A[:, :2] @ detectadas.T).T + A[:, 2]
-            if float(np.mean(np.linalg.norm(reproj - nominales, axis=1))) > 8.0:
+            if float(np.mean(np.linalg.norm(reproj - nominales_pts, axis=1))) > 8.0:
                 A = None
-
-        tl, tr = corners["top_left"], corners["top_right"]
-        bl, br = corners["bottom_left"], corners["bottom_right"]
 
         def _angulo(p1, p2):
             return math.degrees(math.atan2(p2[1] - p1[1], p2[0] - p1[0]))
 
-        angulo = (_angulo(tl, tr) + _angulo(bl, br)) / 2.0
+        # Angulo promedio sobre los pares horizontales disponibles
+        angulos = []
+        if "top_left" in corners and "top_right" in corners:
+            angulos.append(_angulo(corners["top_left"], corners["top_right"]))
+        if "bottom_left" in corners and "bottom_right" in corners:
+            angulos.append(_angulo(corners["bottom_left"], corners["bottom_right"]))
+        if angulos:
+            angulo = sum(angulos) / len(angulos)
 
     # Imagen nivelada para salida visual / deteccion generica
     if A is not None:
@@ -880,11 +896,16 @@ def leer_respuestas_con_coords(image: np.ndarray, coords: dict,
         def _pos(b):
             return _inv_A(A, b["cx_img"], b["cy_img"])
     else:
-        # Sin marcas: asumir hoja alineada y escalar por ancho de imagen
-        escala = gray.shape[1] / 1836.0
+        # Sin marcas: asumir hoja alineada y escalar por cada eje segun el
+        # tamano real de la imagen vs el marco nominal de coordenadas
+        page_w = coords.get("page", {}).get("width", 612)
+        page_h = coords.get("page", {}).get("height", 792)
+        scale_factor = coords.get("scale_factor", 3)
+        escala_x = gray.shape[1] / (page_w * scale_factor)
+        escala_y = gray.shape[0] / (page_h * scale_factor)
 
         def _pos(b):
-            return int(round(b["cx_img"] * escala)), int(round(b["cy_img"] * escala))
+            return int(round(b["cx_img"] * escala_x)), int(round(b["cy_img"] * escala_y))
 
     respuestas: Dict[int, List[int]] = {}
     for b in coords.get("answer_bubbles", []):
@@ -907,10 +928,14 @@ def leer_id_con_coords(image: np.ndarray, coords: dict, transform: Dict,
         def _pos(b):
             return _inv_A(A, b["cx_img"], b["cy_img"])
     else:
-        escala = gray.shape[1] / 1836.0
+        page_w = coords.get("page", {}).get("width", 612)
+        page_h = coords.get("page", {}).get("height", 792)
+        scale_factor = coords.get("scale_factor", 3)
+        escala_x = gray.shape[1] / (page_w * scale_factor)
+        escala_y = gray.shape[0] / (page_h * scale_factor)
 
         def _pos(b):
-            return int(round(b["cx_img"] * escala)), int(round(b["cy_img"] * escala))
+            return int(round(b["cx_img"] * escala_x)), int(round(b["cy_img"] * escala_y))
 
     grid: Dict[int, List[dict]] = {}
     for b in coords.get("id_grid", []):

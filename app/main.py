@@ -13,6 +13,7 @@ try:
         conn.execute(text("ALTER TABLE hojas_respuesta ADD COLUMN IF NOT EXISTS preguntas_orden JSONB"))
         conn.execute(text("ALTER TABLE hojas_respuesta ADD COLUMN IF NOT EXISTS config_seleccion JSONB"))
         conn.execute(text("ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS seccion_id UUID"))
+        conn.execute(text("ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS activa BOOLEAN NOT NULL DEFAULT TRUE"))
         conn.commit()
 except Exception:
     pass
@@ -21,7 +22,14 @@ tags_metadata = [
     {
         "name": "Banco de preguntas",
         "description": "Evaluaciones (bancos), secciones y preguntas. Las secciones agrupan "
-                       "preguntas y permiten seleccionar por cantidad/porcentaje al generar una hoja.",
+                       "preguntas y permiten seleccionar por cantidad/porcentaje al generar una hoja.\n"
+                       "- **Crear pregunta**: `POST /evaluacion/{id}/preguntas/batch`.\n"
+                       "- **Actualizar pregunta** (nombre, tipo, opciones, sección, puntos, etc.): "
+                       "`PUT /pregunta/{id}`.\n"
+                       "- **Desactivar pregunta** (excluirla de hojas nuevas sin borrar su historial): "
+                       "`PUT /pregunta/{id}` con `\"activa\": false`.\n"
+                       "- **Eliminar** definitivamente solo si no tiene resultados ni hojas generadas; "
+                       "en caso contrario devuelva 409 indicando que use desactivación.",
     },
     {
         "name": "Generación de hojas de examen",

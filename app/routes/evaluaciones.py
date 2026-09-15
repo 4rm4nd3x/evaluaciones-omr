@@ -6,10 +6,10 @@ from sqlalchemy import func
 from uuid import UUID
 from typing import List
 from app.database import get_db
-from app.models import Evaluacion, Pregunta, Opcion, Seccion, HojaRespuesta
+from app.models import Evaluacion, Pregunta, Opcion, Seccion, HojaRespuesta, RespuestaDetalle
 from app.schemas import (
     EvaluacionCreate, EvaluacionResponse,
-    PreguntaBatchCreate, PreguntaResponse,
+    PreguntaBatchCreate, PreguntaUpdate, PreguntaResponse,
     SeccionCreate, SeccionUpdate, SeccionBatchCreate, SeccionResponse,
     HojaRespuestaInfo
 )
@@ -239,6 +239,7 @@ def crear_preguntas_batch(evaluacion_id: UUID, data: PreguntaBatchCreate, db: Se
             orden=p_data.orden,
             puntos=p_data.puntos,
             requerida=p_data.requerida,
+            activa=p_data.activa,
             seccion=seccion_str
         )
         db.add(pregunta)
@@ -276,12 +277,95 @@ def listar_preguntas(evaluacion_id: UUID, db: Session = Depends(get_db)):
     ).all()
 
 
-@router.delete("/pregunta/{pregunta_id}")
-def eliminar_pregunta(pregunta_id: UUID, db: Session = Depends(get_db)):
-    """Elimina una pregunta del banco junto con sus opciones."""
+@router.put("/pregunta/{pregunta_id}", response_model=PreguntaResponse)
+def actualizar_pregunta(pregunta_id: UUID, data: PreguntaUpdate, db: Session = Depends(get_db)):
+    """Actualiza parcialmente una pregunta. Permite editar nombre, tipo, enunciado,
+    orden, puntos, requerida, sección y opciones (reemplaza las existentes). Con
+    `activa: false` la desactiva (soft-delete): se excluye de hojas nuevas sin
+    eliminar su historial en resultados y hojas ya generadas."""
     pregunta = db.query(Pregunta).filter(Pregunta.id == pregunta_id).first()
     if not pregunta:
         raise HTTPException(status_code=404, detail="Pregunta no encontrada")
+
+    if data.nombre is not None:
+        pregunta.nombre = data.nombre
+
+    if data.tipo is not None:
+        if data.tipo not in ("single", "multiple"):
+            raise HTTPException(status_code=400, detail="tipo debe ser 'single' o 'multiple'")
+        pregunta.tipo = data.tipo
+
+    if data.enunciado is not None:
+        pregunta.enunciado = data.enunciado
+
+    if data.orden is not None:
+        pregunta.orden = data.orden
+
+    if data.puntos is not None:
+        pregunta.puntos = data.puntos
+
+    if data.requerida is not None:
+        pregunta.requerida = data.requerida
+
+    if data.activa is not None:
+        pregunta.activa = data.activa
+
+    if data.seccion_id is not None or data.seccion is not None:
+        seccion_obj, seccion_str = _resolver_seccion(db, pregunta.evaluacion_id, data)
+        pregunta.seccion_id = seccion_obj.id if seccion_obj else None
+        pregunta.seccion = seccion_str
+
+    if data.opciones is not None:
+        _validar_opciones(data.opciones, pregunta.nombre)
+        db.query(Opcion).filter(Opcion.pregunta_id == pregunta.id).delete()
+        db.flush()
+        for idx, opt_data in enumerate(data.opciones):
+            opcion = Opcion(
+                pregunta_id=pregunta.id,
+                key=opt_data.key,
+                label=opt_data.label,
+                es_correcta=opt_data.es_correcta,
+                orden=idx + 1
+            )
+            db.add(opcion)
+
+    db.commit()
+    db.refresh(pregunta)
+    return pregunta
+
+
+@router.delete("/pregunta/{pregunta_id}")
+def eliminar_pregunta(pregunta_id: UUID, db: Session = Depends(get_db)):
+    """Elimina definitivamente una pregunta y sus opciones.
+
+    **No se permite** si la pregunta ya fue evaluada (existen resultados que la
+    referencian) o si está impresa en una hoja generada: borrarla rompería el
+    historial y el snapshot de esas hojas. En esos casos use `PUT /pregunta/{id}`
+    con `activa: false` (desactivar) para excluirla de hojas nuevas sin romper nada."""
+    pregunta = db.query(Pregunta).filter(Pregunta.id == pregunta_id).first()
+    if not pregunta:
+        raise HTTPException(status_code=404, detail="Pregunta no encontrada")
+
+    tiene_resultados = db.query(RespuestaDetalle).filter(
+        RespuestaDetalle.pregunta_id == pregunta_id
+    ).first()
+    if tiene_resultados:
+        raise HTTPException(
+            status_code=409,
+            detail=("La pregunta ya fue evaluada y tiene resultados asociados. "
+                    "No se puede eliminar; use PUT /pregunta/{id} con activa: false para desactivarla.")
+        )
+
+    esta_en_hoja = db.query(HojaRespuesta).filter(
+        HojaRespuesta.preguntas_orden.contains([str(pregunta_id)])
+    ).first()
+    if esta_en_hoja:
+        raise HTTPException(
+            status_code=409,
+            detail=("La pregunta está impresa en la hoja '{}'. No se puede eliminar; "
+                    "use PUT /pregunta/{id} con activa: false para desactivarla.".format(esta_en_hoja.identificador))
+        )
+
     db.delete(pregunta)
     db.commit()
     return {"detail": "Eliminada"}

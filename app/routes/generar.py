@@ -106,6 +106,36 @@ def _obtener_hoja_preguntas_base64(ev, identificador, absolute_dir, db, hoja=Non
     return base64.b64encode(preguntas_pdf_bytes).decode("utf-8")
 
 
+def _obtener_hoja_resultados_base64(ev, identificador, absolute_dir, db, hoja=None):
+    """Devuelve la hoja de resultados/clave en base64 (regenera si falta)."""
+    absolute_clave_path = os.path.join(absolute_dir, "hojas_resultado.pdf")
+    if not os.path.exists(absolute_clave_path):
+        preguntas = _obtener_preguntas_ordenadas(db, ev.id)
+        if not preguntas:
+            return None
+        if hoja is not None and hoja.preguntas_orden:
+            preguntas = _aplicar_snapshot(db, ev.id, preguntas, hoja.preguntas_orden)
+        preguntas_list = _construir_preguntas_list(preguntas)
+        try:
+            clave_pdf_bytes, _ = generar_hoja_respuestas(
+                evaluacion_nombre=ev.nombre,
+                identificador=identificador,
+                preguntas=preguntas_list,
+                descripcion=ev.descripcion or "",
+                short_id=ev.short_id,
+                respuestas_correctas=_extraer_correctas(preguntas_list),
+                es_clave=True,
+            )
+        except Exception:
+            return None
+        with open(absolute_clave_path, "wb") as f:
+            f.write(clave_pdf_bytes)
+    else:
+        with open(absolute_clave_path, "rb") as f:
+            clave_pdf_bytes = f.read()
+    return base64.b64encode(clave_pdf_bytes).decode("utf-8")
+
+
 # ── Selección por secciones (Caso 1: template) ───────────────────────────────
 
 def _seleccionar_template(
@@ -353,20 +383,24 @@ def generar_hoja(evaluacion_id: UUID, data: GenerarHojaRequest, db: Session = De
             hoja_preguntas_base64 = _obtener_hoja_preguntas_base64(
                 ev, identificador, pdf_dir, db, hoja=existing_hoja
             )
+            hojas_resultado_base64 = _obtener_hoja_resultados_base64(
+                ev, identificador, pdf_dir, db, hoja=existing_hoja
+            )
             return GenerarHojaResponse(
                 hoja_id=existing_hoja.id,
                 identificador=existing_hoja.identificador,
                 qr_data=qr_data_dict,
                 pdf_base64=pdf_base64,
                 hoja_preguntas_base64=hoja_preguntas_base64,
+                hojas_resultado_base64=hojas_resultado_base64,
                 cantidad_preguntas=len(existing_hoja.preguntas_orden or []),
                 config_seleccion=existing_hoja.config_seleccion,
             )
 
-    # --- Seleccionar preguntas ---
-    preguntas_all = _obtener_preguntas_ordenadas(db, evaluacion_id)
+    # --- Seleccionar preguntas (solo activas) ---
+    preguntas_all = [p for p in _obtener_preguntas_ordenadas(db, evaluacion_id) if p.activa]
     if not preguntas_all:
-        raise HTTPException(status_code=400, detail="La evaluación no tiene preguntas")
+        raise HTTPException(status_code=400, detail="La evaluación no tiene preguntas activas")
 
     seleccionadas, config_seleccion = _resolve_seleccion(data, preguntas_all, evaluacion_id, db)
     if not seleccionadas:
@@ -395,6 +429,7 @@ def generar_hoja(evaluacion_id: UUID, data: GenerarHojaRequest, db: Session = De
         respuestas_correctas=_extraer_correctas(preguntas_list),
         es_clave=True,
     )
+    pdf_clave_base64 = base64.b64encode(pdf_clave_bytes).decode("utf-8")
 
     # --- Storage ---
     file_hash = hashlib.sha256(f"{evaluacion_id}:{identificador}".encode()).hexdigest()[:16]
@@ -462,6 +497,7 @@ def generar_hoja(evaluacion_id: UUID, data: GenerarHojaRequest, db: Session = De
         qr_data=qr_data_dict,
         pdf_base64=pdf_base64,
         hoja_preguntas_base64=hoja_preguntas_base64,
+        hojas_resultado_base64=pdf_clave_base64,
         cantidad_preguntas=len(seleccionadas),
         config_seleccion=config_seleccion,
     )
