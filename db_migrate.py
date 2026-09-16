@@ -50,6 +50,8 @@ def main():
         conn.execute(text("ALTER TABLE hojas_respuesta ADD COLUMN IF NOT EXISTS config_seleccion JSONB"))
         conn.execute(text("ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS seccion_id UUID"))
         conn.execute(text("ALTER TABLE preguntas ADD COLUMN IF NOT EXISTS activa BOOLEAN NOT NULL DEFAULT TRUE"))
+        conn.execute(text("ALTER TABLE resultados ADD COLUMN IF NOT EXISTS errores JSONB"))
+        conn.execute(text("ALTER TABLE respuestas_detalle ADD COLUMN IF NOT EXISTS ambigua BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.commit()
     print("      ✓ Columnas verificadas")
 

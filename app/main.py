@@ -1,8 +1,17 @@
+import logging
+
 from fastapi import FastAPI
 from sqlalchemy import text
 from app.database import engine, Base
 from app.routes import evaluaciones, generar, evaluar, generica
 from app.config import DEBUG, STORAGE_PATH
+
+logging.basicConfig(
+    level=logging.DEBUG if DEBUG else logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+logger.info(f"Arrancando Evaluaciones OMR API (debug={DEBUG}, storage={STORAGE_PATH})")
 
 # Create tables
 Base.metadata.create_all(bind=engine)

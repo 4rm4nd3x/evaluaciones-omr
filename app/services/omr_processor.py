@@ -3,7 +3,10 @@ import numpy as np
 import base64
 import io
 import json
+import logging
 from typing import List, Tuple, Optional, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def decode_image_base64(base64_str: str) -> np.ndarray:
@@ -779,6 +782,54 @@ def _rotar_expandiendo(image: np.ndarray, angulo: float):
     return rotada, M, (nw - w) // 2, (nh - h) // 2
 
 
+def _estimar_A_desde_qr(image: np.ndarray) -> Optional[np.ndarray]:
+    """Estima la similitud hoja->imagen usando el QR de la hoja como ancla.
+
+    El QR se imprime siempre en una posición fija de la hoja (generador).
+    Si no se detectaron marcas de esquina (fotos con encuadre recortado), el
+    QR ofrece 4 puntos conocidos con los que aproximar la transformación.
+    """
+    try:
+        from app.services.sheet_generator import ML, MT, PAGE_H
+        from pyzbar import pyzbar
+    except Exception:
+        return None
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    decoded = pyzbar.decode(gray)
+    if not decoded:
+        return None
+
+    # Posición nominal del QR en coords (SCALE_3X, y hacia abajo).
+    # En el PDF: x=ML, y=(PAGE_H-MT)-50, tamaño 50pt. En imagen 3x:
+    #   x_img = x_pdf*scale, y_img = (PAGE_H - y_pdf)*scale
+    sc = 3
+    qr_size_pt = 50
+    x_pdf0 = ML
+    y_pdf0 = (PAGE_H - MT) - qr_size_pt
+    x0 = x_pdf0 * sc
+    xn = (x_pdf0 + qr_size_pt) * sc
+    y_top = (PAGE_H - (y_pdf0 + qr_size_pt)) * sc  # borde superior (menor y_img)
+    y_bot = (PAGE_H - y_pdf0) * sc                  # borde inferior (mayor y_img)
+    nominal = np.float32([[x0, y_top], [xn, y_top], [xn, y_bot], [x0, y_bot]])  # TL,TR,BR,BL
+
+    # El QR detectado: ordenar sus vértices igual que nominal (TL,TR,BR,BL)
+    brand = decoded[0]
+    poly = np.float32(brand.polygon)
+    cx_p = float(np.mean(poly[:, 0]))
+    cy_p = float(np.mean(poly[:, 1]))
+    orden = sorted(poly, key=lambda p: (np.arctan2(p[1] - cy_p, p[0] - cx_p)))
+    detected = np.float32(orden)  # angulo creciente: TL,TR,BR,BL
+
+    try:
+        A, _ = cv2.estimateAffinePartial2D(detected, nominal)
+    except cv2.error:
+        return None
+    if A is None:
+        return None
+    return A
+
+
 def enderezar_imagen(image: np.ndarray, nominal_size: Tuple[int, int] = (1836, 2376)) -> Tuple[np.ndarray, Dict]:
     """Analiza las marcas de esquina de la hoja y prepara la lectura OMR.
 
@@ -841,6 +892,15 @@ def enderezar_imagen(image: np.ndarray, nominal_size: Tuple[int, int] = (1836, 2
         if angulos:
             angulo = sum(angulos) / len(angulos)
 
+    # Fallback de alineación: sin marcas de esquina, anclar por el QR (fotos
+    # recortadas / hojas parcialmente fuera de encuadre).
+    origen_A = "esquinas"
+    if A is None:
+        A = _estimar_A_desde_qr(image)
+        if A is not None:
+            angulo = 0.0
+            origen_A = "qr"
+
     # Imagen nivelada para salida visual / deteccion generica
     if A is not None:
         rotada, _, gx, gy = _rotar_expandiendo(image, angulo)
@@ -849,7 +909,8 @@ def enderezar_imagen(image: np.ndarray, nominal_size: Tuple[int, int] = (1836, 2
     else:
         nivelada, _banda = _recortar_banda_marcas(image)
 
-    return nivelada, {"A": A, "enderezada": A is not None, "angulo": angulo}
+    return nivelada, {"A": A, "enderezada": A is not None, "angulo": angulo,
+                      "origen": origen_A}
 
 
 def _inv_A(A: np.ndarray, cx: float, cy: float) -> Tuple[int, int]:
@@ -880,60 +941,137 @@ def _muestreo_osculo(gray: np.ndarray, cx: int, cy: int, r: int) -> Optional[flo
     return float(np.mean(roi))
 
 
-UMBRAL_LAPIZ = 185  # gris medio por debajo => marcada (lapiz HB ~60-160, papel >215)
+def _muestreo_contraste(gray: np.ndarray, cx: int, cy: int, r: float) -> Optional[Tuple[float, float]]:
+    """Media del interior de la burbuja y de un anillo externo (fondo local).
+
+    Robustez ante imágenes oscuras/sombras: en vez de comparar contra un umbral
+    absoluto de gris, se compara el interior con el papel que rodea a la burbuja.
+    Devuelve (media_interior, media_anillo) o None si falta información.
+    """
+    h, w = gray.shape[:2]
+    r_max = int(r * 1.9) + 1
+    x1, x2 = max(0, cx - r_max), min(w, cx + r_max)
+    y1, y2 = max(0, cy - r_max), min(h, cy + r_max)
+    if x2 - x1 < 3 or y2 - y1 < 3:
+        return None
+    yy, xx = np.mgrid[y1:y2, x1:x2]
+    d2 = (xx - cx) ** 2 + (yy - cy) ** 2
+    region = gray[y1:y2, x1:x2]
+    interior = region[d2 <= (r * 0.75) ** 2]
+    anillo = region[(d2 >= (r * 1.30) ** 2) & (d2 <= (r * 1.85) ** 2)]
+    if interior.size == 0 or anillo.size == 0:
+        return None
+    return float(interior.mean()), float(anillo.mean())
+
+
+def _radio_burbuja_imagen(r_img: float, A: Optional[np.ndarray],
+                          escala_x: float, escala_y: float) -> float:
+    """Radio real (en px de la imagen) de una burbuja cuyo radio nominal de
+    coordenadas es r_img. Con A (similitud hoja->imagen) se desconvierte la
+    escala; sin A se usa el factor por eje calculado."""
+    if A is not None:
+        s = float(np.hypot(A[0, 0], A[0, 1]))
+        if s > 1e-6:
+            return r_img / s
+    return r_img * max(escala_x, escala_y)
+
+
+UMBRAL_CONTRASTE = 22  # anillo - interior: por debajo se consideraba dudosa la marca
 
 
 def leer_respuestas_con_coords(image: np.ndarray, coords: dict,
-                               transform: Dict, num_preguntas: int) -> List[List[int]]:
+                               transform: Dict, num_preguntas: int,
+                               umbral_contraste: float = UMBRAL_CONTRASTE,
+                               marcar_error: Optional[List[str]] = None) -> List[List[int]]:
     """Lee las respuestas muestreando las coordenadas conocidas
     (coordenadas.json). Si transform['A'] existe se mapea hoja->imagen con su
     inversa (funciona con cualquier inclinacion); si no, se asume imagen
     alineada 1:1 con el marco de referencia.
+    La decisión se toma por CONTRASTE LOCAL (anillo - interior), tolerando
+    fotos oscuras que rompían un umbral absoluto de gris. Si una pregunta
+    termina con TODAS sus burbujas "marcadas" (p.ej. por mala alineación o
+    sombra), se considera no reconocida: se limpia y se registra en marcar_error.
     Retorna {indice_pregunta: [indices_opcion]} (soporta múltiples marcas)."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
     A = transform.get("A")
+    page_w = coords.get("page", {}).get("width", 612)
+    page_h = coords.get("page", {}).get("height", 792)
+    scale_factor = coords.get("scale_factor", 3)
+    escala_x = gray.shape[1] / (page_w * scale_factor)
+    escala_y = gray.shape[0] / (page_h * scale_factor)
+
     if A is not None:
         def _pos(b):
             return _inv_A(A, b["cx_img"], b["cy_img"])
     else:
         # Sin marcas: asumir hoja alineada y escalar por cada eje segun el
         # tamano real de la imagen vs el marco nominal de coordenadas
-        page_w = coords.get("page", {}).get("width", 612)
-        page_h = coords.get("page", {}).get("height", 792)
-        scale_factor = coords.get("scale_factor", 3)
-        escala_x = gray.shape[1] / (page_w * scale_factor)
-        escala_y = gray.shape[0] / (page_h * scale_factor)
-
         def _pos(b):
             return int(round(b["cx_img"] * escala_x)), int(round(b["cy_img"] * escala_y))
 
     respuestas: Dict[int, List[int]] = {}
+    total_por_pregunta: Dict[int, int] = {}
+    contrastes_por_pregunta: Dict[int, List[dict]] = {}
     for b in coords.get("answer_bubbles", []):
         idx = b["question_index"]
         if idx >= num_preguntas:
             continue
+        total_por_pregunta[idx] = total_por_pregunta.get(idx, 0) + 1
         cx, cy = _pos(b)
-        g = _muestreo_osculo(gray, cx, cy, max(4, int(b["r_img"] * 0.75)))
-        if g is not None and g < UMBRAL_LAPIZ:
+        r = _radio_burbuja_imagen(b["r_img"], A, escala_x, escala_y)
+        muestreo = _muestreo_contraste(gray, cx, cy, r)
+        if muestreo is None:
+            logger.warning(f"[omr] burbuja q{idx} opt{b['option_index']} pos=({cx},{cy}) r={r:.1f} fuera de imagen")
+            continue
+        interior, anillo = muestreo
+        contraste = anillo - interior
+        contrastes_por_pregunta.setdefault(idx, []).append(
+            (b["option_index"], round(interior, 1), round(anillo, 1), round(contraste, 1))
+        )
+        if contraste >= umbral_contraste:
             respuestas.setdefault(idx, []).append(b["option_index"])
-    return [respuestas.get(i, []) for i in range(num_preguntas)]
+
+    for idx in sorted(contrastes_por_pregunta):
+        detalle = ";".join(f"opt{o}:int={i}/an={a}/Δ={d}" for o, i, a, d in contrastes_por_pregunta[idx])
+        logger.info(f"[omr] pregunta {idx} (burbujas {detalle}) -> marcadas={sorted(respuestas.get(idx, []))}")
+
+    # Guarda anti-fantasma: si se marcaron TODAS las opciones de una pregunta,
+    # la lectura es casi seguro errónea (sombra / mala alineación / burbujas
+    # impresas). Limpiar y avisar para revisión manual.
+    resultado = []
+    for i in range(num_preguntas):
+        marcadas = respuestas.get(i, [])
+        total = total_por_pregunta.get(i, 0)
+        if total >= 2 and len(marcadas) == total:
+            if marcar_error is not None:
+                marcar_error.append(
+                    f"pregunta {i + 1}: lectura dudosa - se detectaron las {total} "
+                    f"opciones como marcadas; se descartan para revisión manual"
+                )
+            marcadas = []
+        resultado.append(marcadas)
+    if marcar_error:
+        logger.warning(f"[omr] lectura con avisos: {marcar_error}")
+    return resultado
 
 
 def leer_id_con_coords(image: np.ndarray, coords: dict, transform: Dict,
-                       num_digitos: int = 8) -> str:
-    """Lee el ID PERSONA muestreando el grid conocido de coordenadas.json."""
+                       num_digitos: int = 8, umbral_contraste: float = UMBRAL_CONTRASTE) -> str:
+    """Lee el ID PERSONA muestreando el grid conocido de coordenadas.json.
+    Por fila elige la celda con mayor contraste local (anillo - interior);
+    si ninguna supera el umbral se deja '?'."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
     A = transform.get("A")
+    page_w = coords.get("page", {}).get("width", 612)
+    page_h = coords.get("page", {}).get("height", 792)
+    scale_factor = coords.get("scale_factor", 3)
+    escala_x = gray.shape[1] / (page_w * scale_factor)
+    escala_y = gray.shape[0] / (page_h * scale_factor)
+
     if A is not None:
         def _pos(b):
             return _inv_A(A, b["cx_img"], b["cy_img"])
     else:
-        page_w = coords.get("page", {}).get("width", 612)
-        page_h = coords.get("page", {}).get("height", 792)
-        scale_factor = coords.get("scale_factor", 3)
-        escala_x = gray.shape[1] / (page_w * scale_factor)
-        escala_y = gray.shape[0] / (page_h * scale_factor)
-
         def _pos(b):
             return int(round(b["cx_img"] * escala_x)), int(round(b["cy_img"] * escala_y))
 
@@ -945,15 +1083,94 @@ def leer_id_con_coords(image: np.ndarray, coords: dict, transform: Dict,
     identifier = ""
     for row_idx in sorted(grid.keys())[:num_digitos]:
         celdas = sorted(grid[row_idx], key=lambda b: b["col"])
-        mejor_col, mejor_g = -1, UMBRAL_LAPIZ
+        mejor_col, mejor_contraste = -1, -1.0
+        contrastes_fila = []
         for celda in celdas:
             cx, cy = _pos(celda)
-            g = _muestreo_osculo(gray, cx, cy, max(3, int(celda["r_img"] * 0.8)))
-            if g is not None and g < mejor_g:
-                mejor_g, mejor_col = g, celda["col"]
+            r = _radio_burbuja_imagen(celda["r_img"], A, escala_x, escala_y)
+            muestreo = _muestreo_contraste(gray, cx, cy, r)
+            if muestreo is None:
+                continue
+            interior, anillo = muestreo
+            contraste = anillo - interior
+            contrastes_fila.append((celda["col"], round(interior, 1), round(anillo, 1), round(contraste, 1)))
+            if contraste > mejor_contraste:
+                mejor_contraste, mejor_col = contraste, celda["col"]
+        logger.debug(
+            f"[omr] ID fila {row_idx}: contrastes(interior,anillo,delta)="
+            + ";".join(f"c{c}:{i}/{a}/{d}" for c, i, a, d in contrastes_fila)
+            + f" -> mejor col={mejor_col} ({mejor_contraste:+.1f})"
+        )
         # Solo aceptar si hay tinta real (evita fantasmas con papel levemente gris)
-        if 0 <= mejor_col <= 9 and mejor_g < UMBRAL_LAPIZ - 25:
+        if 0 <= mejor_col <= 9 and mejor_contraste >= umbral_contraste:
             identifier += str(mejor_col)
         elif mejor_col >= 0:
             identifier += "?"
+    logger.info(f"[omr] ID leído='{identifier}'")
+    return identifier
+
+
+def leer_id_con_circulos(image: np.ndarray, num_digitos: int = 8,
+                         umbral_interior: float = 135.0) -> str:
+    """Lee el ID PERSONA localizando el grid 10x10 por detección de círculos
+    (HoughCircles) en la franja superior derecha, en lugar de depender del
+    ancla QR o de las coordenadas (el grid es tupido y la translación del QR
+    puede desviarlo ~6px, contaminando celdas vecinas con el anillo).
+
+    Para cada fila (dígito) se muestrea el INTERIOR de cada celda con radio
+    pequeño (0.5*r): la celda marcada queda mucho más oscura (tinta) que las
+    vacías (papel). Se elige la col. más oscura; si no baja del umbral se deja '?'.
+    """
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+    h, w = gray.shape
+
+    # El grid de ID está en el cuadrante superior derecho.
+    top = int(h * 0.35)
+    left = int(w * 0.55)
+    blurred = cv2.GaussianBlur(gray[0:top, :], (5, 5), 1)
+    circles = cv2.HoughCircles(
+        blurred, cv2.HOUGH_GRADIENT,
+        dp=1.2, minDist=15, param1=50, param2=20,
+        minRadius=5, maxRadius=15,
+    )
+    if circles is None:
+        logger.warning("[omr] ID por círculos: no se detectaron círculos en la franja superior")
+        return ""
+
+    pts = [(float(c[0]), float(c[1]), float(c[2])) for c in circles[0]]
+    pts = [p for p in pts if p[0] > left and p[1] < top]
+    if not pts:
+        return ""
+
+    # Agrupar en filas y quedarnos con las de ~10 columnas (grid de ID) en orden.
+    rows = _group_into_rows(pts, y_threshold=8)
+    id_rows = [r for r in rows if len(r) >= 9]
+    id_rows.sort(key=lambda r: r[0][1])
+    id_rows = id_rows[:num_digitos]
+    if not id_rows:
+        return ""
+
+    identifier = ""
+    for i, row in enumerate(id_rows):
+        row.sort(key=lambda p: p[0])
+        mejor_col, mejor_interior = -1, 255.0
+        contrastes_fila = []
+        for col, (cx, cy, rr) in enumerate(row):
+            r_small = max(3.0, rr * 0.5)
+            y1, y2 = max(0, int(cy - r_small)), min(h, int(cy + r_small))
+            x1, x2 = max(0, int(cx - r_small)), min(w, int(cx + r_small))
+            roi = gray[y1:y2, x1:x2]
+            interior = float(np.mean(roi)) if roi.size else 255.0
+            contrastes_fila.append((col, round(interior, 1)))
+            if interior < mejor_interior:
+                mejor_interior, mejor_col = interior, col
+        logger.debug(
+            f"[omr] ID(círculos) fila {i}: interiores=" + ";".join(f"c{c}:{v}" for c, v in contrastes_fila)
+            + f" -> mejor col={mejor_col} ({mejor_interior:.1f})"
+        )
+        if 0 <= mejor_col <= 9 and mejor_interior < umbral_interior:
+            identifier += str(mejor_col)
+        else:
+            identifier += "?"
+    logger.info(f"[omr] ID(círculos) completo='{identifier}'")
     return identifier

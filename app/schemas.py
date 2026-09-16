@@ -146,6 +146,11 @@ class GenerarHojaRequest(BaseModel):
     aleatorio: bool = Field(False, description="Legacy: selección/orden aleatorios")
     hojaPreguntas: Optional[str] = Field(None, description="PDF de preguntas (base64) cargado externamente — aún sin uso")
     hojaRespuestas: Optional[str] = Field(None, description="PDF de respuestas (base64) cargado externamente — aún sin uso")
+    # Impresión personalizada del encabezado / pie de la hoja
+    fecha: Optional[str] = Field(None, description="Fecha impresa en el encabezado (YYYY-MM-DD). Si falta se usa la fecha del día.")
+    nombre: Optional[str] = Field(None, description="Nombre de la evaluación impreso en la hoja; si falta se usa el nombre de la evaluación.")
+    descripcion: Optional[str] = Field(None, description="Descripción impresa en la hoja; si falta se usa la descripción de la evaluación.")
+    recuadro_firma: bool = Field(False, description="Si true, dibuja al pie un recuadro para que el postulante anote su Nombre y Firma (no se lee por OMR).")
 
 
 class GenerarHojaResponse(BaseModel):
@@ -209,6 +214,7 @@ class RespuestaDetalleResponse(BaseModel):
     respuesta: Optional[str]
     es_correcta: bool
     puntos_obtenidos: float
+    ambigua: bool = False
 
     class Config:
         from_attributes = True
@@ -226,6 +232,7 @@ class ResultadoResponse(BaseModel):
     imagen_anotada_base64: Optional[str] = None
     qr_codes: List[str]
     storage_path: Optional[str] = None
+    errores: List[str] = []
 
 
 class ResultadoLoteResponse(BaseModel):
@@ -283,3 +290,4 @@ class ResultadoCompletoResponse(ResultadoResumenResponse):
     respuestas: List[RespuestaDetalleResponse]
     pdf_revisado_base64: Optional[str] = None
     imagen_anotada_base64: Optional[str] = None
+    errores: List[str] = []

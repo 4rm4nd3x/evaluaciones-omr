@@ -105,6 +105,7 @@ class Resultado(Base):
     total_preguntas = Column(Integer, nullable=False, default=0)
     respuestas_correctas = Column(Integer, nullable=False, default=0)
     pdf_revisado_path = Column(Text, nullable=True)
+    errores = Column(JSONB, nullable=True)  # avisos de lectura dudosa (revisión manual)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     evaluacion = relationship("Evaluacion", back_populates="resultados")
@@ -121,6 +122,7 @@ class RespuestaDetalle(Base):
     respuesta = Column(String(10), nullable=True)
     es_correcta = Column(Boolean, nullable=False, default=False)
     puntos_obtenidos = Column(Float, nullable=False, default=0.0)
+    ambigua = Column(Boolean, nullable=False, default=False)
 
     resultado = relationship("Resultado", back_populates="respuestas_detalle")
 

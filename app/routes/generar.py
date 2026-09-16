@@ -80,6 +80,14 @@ def _aplicar_snapshot(db: Session, evaluacion_id: UUID, preguntas: list, pregunt
     return ordenadas if ordenadas else preguntas
 
 
+def _impresion_snapshot(hoja) -> dict:
+    """Recupera los datos de impresión (fecha/nombre/descripción/recuadro_firma)
+    guardados en el snapshot de la hoja para regeneraciones fieles."""
+    cfg = (hoja.config_seleccion or {}) if hoja is not None else {}
+    imp = cfg.get("impresion") if isinstance(cfg, dict) else None
+    return imp if isinstance(imp, dict) else {}
+
+
 def _obtener_hoja_preguntas_base64(ev, identificador, absolute_dir, db, hoja=None):
     """Devuelve la hoja de preguntas en base64 (regenera si falta)."""
     absolute_preguntas_path = os.path.join(absolute_dir, "hoja_preguntas.pdf")
@@ -90,11 +98,13 @@ def _obtener_hoja_preguntas_base64(ev, identificador, absolute_dir, db, hoja=Non
         if hoja is not None and hoja.preguntas_orden:
             preguntas = _aplicar_snapshot(db, ev.id, preguntas, hoja.preguntas_orden)
         try:
+            imp = _impresion_snapshot(hoja)
             preguntas_pdf_bytes, _ = generar_hoja_preguntas(
-                evaluacion_nombre=ev.nombre,
+                evaluacion_nombre=imp.get("nombre") or ev.nombre,
                 identificador=identificador,
                 preguntas=_construir_preguntas_list(preguntas),
-                descripcion=ev.descripcion or ""
+                descripcion=imp.get("descripcion") if imp.get("descripcion") is not None else (ev.descripcion or ""),
+                fecha=imp.get("fecha"),
             )
         except Exception:
             return None
@@ -117,14 +127,16 @@ def _obtener_hoja_resultados_base64(ev, identificador, absolute_dir, db, hoja=No
             preguntas = _aplicar_snapshot(db, ev.id, preguntas, hoja.preguntas_orden)
         preguntas_list = _construir_preguntas_list(preguntas)
         try:
+            imp = _impresion_snapshot(hoja)
             clave_pdf_bytes, _ = generar_hoja_respuestas(
-                evaluacion_nombre=ev.nombre,
+                evaluacion_nombre=imp.get("nombre") or ev.nombre,
                 identificador=identificador,
                 preguntas=preguntas_list,
-                descripcion=ev.descripcion or "",
+                descripcion=imp.get("descripcion") if imp.get("descripcion") is not None else (ev.descripcion or ""),
                 short_id=ev.short_id,
                 respuestas_correctas=_extraer_correctas(preguntas_list),
                 es_clave=True,
+                fecha=imp.get("fecha"),
             )
         except Exception:
             return None
@@ -409,25 +421,39 @@ def generar_hoja(evaluacion_id: UUID, data: GenerarHojaRequest, db: Session = De
     snapshot_orden = [str(p.id) for p in seleccionadas]
     preguntas_list = _construir_preguntas_list(seleccionadas)
 
+    # --- Impresión personalizada (request > datos de la evaluación) ---
+    impresion = {
+        "fecha": data.fecha,
+        "nombre": data.nombre or ev.nombre,
+        "descripcion": data.descripcion if data.descripcion is not None else (ev.descripcion or ""),
+        "recuadro_firma": bool(data.recuadro_firma),
+    }
+    # Snapshot de impresión: las reimpresiones salen idénticas aunque la
+    # evaluación cambie después (misma mecánica que preguntas_orden).
+    config_seleccion = {**config_seleccion, "impresion": impresion}
+
     # --- Generar PDFs ---
     pdf_bytes, coords = generar_hoja_respuestas(
-        evaluacion_nombre=ev.nombre,
+        evaluacion_nombre=impresion["nombre"],
         identificador=identificador,
         preguntas=preguntas_list,
-        descripcion=ev.descripcion or "",
+        descripcion=impresion["descripcion"],
         short_id=ev.short_id,
+        fecha=impresion["fecha"],
+        recuadro_firma=impresion["recuadro_firma"],
     )
     pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
     coords_json = exportar_coordenadas_json(coords)
 
     pdf_clave_bytes, _ = generar_hoja_respuestas(
-        evaluacion_nombre=ev.nombre,
+        evaluacion_nombre=impresion["nombre"],
         identificador=identificador,
         preguntas=preguntas_list,
-        descripcion=ev.descripcion or "",
+        descripcion=impresion["descripcion"],
         short_id=ev.short_id,
         respuestas_correctas=_extraer_correctas(preguntas_list),
         es_clave=True,
+        fecha=impresion["fecha"],
     )
     pdf_clave_base64 = base64.b64encode(pdf_clave_bytes).decode("utf-8")
 
@@ -451,6 +477,7 @@ def generar_hoja(evaluacion_id: UUID, data: GenerarHojaRequest, db: Session = De
             "evaluacion_id": str(evaluacion_id),
             "identificador": identificador,
             "config_seleccion": config_seleccion,
+            "impresion": impresion,
             "cantidad_preguntas": len(seleccionadas),
             "preguntas_orden": snapshot_orden,
         }, f, indent=2)
@@ -482,10 +509,11 @@ def generar_hoja(evaluacion_id: UUID, data: GenerarHojaRequest, db: Session = De
 
     # --- Hoja de preguntas ---
     preguntas_pdf_bytes, _ = generar_hoja_preguntas(
-        evaluacion_nombre=ev.nombre,
+        evaluacion_nombre=impresion["nombre"],
         identificador=identificador,
         preguntas=preguntas_list,
-        descripcion=ev.descripcion or "",
+        descripcion=impresion["descripcion"],
+        fecha=impresion["fecha"],
     )
     hoja_preguntas_base64 = base64.b64encode(preguntas_pdf_bytes).decode("utf-8")
     with open(os.path.join(absolute_dir, "hoja_preguntas.pdf"), "wb") as f:

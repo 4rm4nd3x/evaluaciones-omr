@@ -2,7 +2,7 @@ import io
 import json
 import textwrap
 import qrcode
-from datetime import date
+from datetime import date, datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.colors import black, white
@@ -48,11 +48,31 @@ def _draw_section_chip(c, x, y_baseline, text: str, size: float = 7):
     c.setFillColor(black)
 
 
-def generar_hoja_respuestas(evaluacion_nombre: str, identificador: str, preguntas: list, descripcion: str = "", short_id: str = "", respuestas_correctas: Dict = None, es_clave: bool = False, qr_dict: dict = None) -> Tuple[bytes, Dict]:
+def _fecha_impresa(fecha: str = None) -> str:
+    """Fecha legible DD/MM/YYYY para el encabezado de la hoja.
+    Acepta 'YYYY-MM-DD' (o cualquier valor ISO; se toma la parte de la fecha)
+    o 'DD/MM/YYYY'. Si falta o es inválida, usa la fecha del día."""
+    if fecha:
+        txt = str(fecha)[:10]
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(txt, fmt).strftime("%d/%m/%Y")
+            except ValueError:
+                continue
+    return date.today().strftime("%d/%m/%Y")
+
+
+def generar_hoja_respuestas(evaluacion_nombre: str, identificador: str, preguntas: list, descripcion: str = "", short_id: str = "", respuestas_correctas: Dict = None, es_clave: bool = False, qr_dict: dict = None, fecha: str = None, recuadro_firma: bool = False, lineas_separadoras: bool = True) -> Tuple[bytes, Dict]:
     """
     Genera hoja de respuestas PDF + diccionario de coordenadas.
     Si es_clave=True (con respuestas_correctas={num_pregunta: [idx_opciones]}),
     las burbujas correctas se dibujan rellenas: hoja de resultados/clave.
+    `fecha` permite imprimir una fecha distinta a la del día (YYYY-MM-DD o DD/MM/YYYY).
+    Si recuadro_firma=True se dibuja al pie un recuadro para que el postulante
+    anote su Nombre y Firma (no se lee por OMR; solo informativo).
+    Si lineas_separadoras=True (default) se dibuja una línea gris sutil entre
+    las filas de burbujas de cada columna (ayuda visual; no interfiere con la
+    lectura OMR: va a mitad de camino entre filas y en gris claro).
     Retorna: (pdf_bytes, coordenadas_dict)
     """
     buffer = io.BytesIO()
@@ -105,8 +125,8 @@ def generar_hoja_respuestas(evaluacion_nombre: str, identificador: str, pregunta
         c.drawString(text_x, qr_y + qr_size - 24, descripcion[:65])
 
     c.setFont(FB, 8)
-    fecha = date.today().strftime("%d/%m/%Y")
-    c.drawString(text_x, qr_y + qr_size - 36, f"Fecha: {fecha}     ID: {identificador}")
+    fecha_str = _fecha_impresa(fecha)
+    c.drawString(text_x, qr_y + qr_size - 36, f"Fecha: {fecha_str}     ID: {identificador}")
 
     # Banner identificador cuando es hoja de resultados/clave
     if es_clave:
@@ -292,7 +312,8 @@ def generar_hoja_respuestas(evaluacion_nombre: str, identificador: str, pregunta
 
     # Paso vertical adaptativo: si hay demasiadas filas, se compacta hasta 14pt
     row_step = 18.0
-    avail_h = y - (MB + 24)
+    firma_reserva = 44 if recuadro_firma else 0
+    avail_h = y - (MB + 24 + firma_reserva)
     if rows_in_tallest_col > 1:
         max_step = (avail_h - 18 - 12) / (rows_in_tallest_col - 1)
         row_step = max(14.0, min(row_step, max_step))
@@ -320,7 +341,7 @@ def generar_hoja_respuestas(evaluacion_nombre: str, identificador: str, pregunta
     )
 
     # Draw bubbles inside the rectangle
-    _draw_answers_cols(c, ML, y, preguntas, coords, width=ans_usable_w, n_cols=N_ANS_COLS, row_step=row_step, respuestas_correctas=respuestas_correctas)
+    _draw_answers_cols(c, ML, y, preguntas, coords, width=ans_usable_w, n_cols=N_ANS_COLS, row_step=row_step, respuestas_correctas=respuestas_correctas, lineas_separadoras=lineas_separadoras)
 
     # Record the 4 corners as alignment markers
     coords["section_markers"].extend([
@@ -330,8 +351,36 @@ def generar_hoja_respuestas(evaluacion_nombre: str, identificador: str, pregunta
         {"cx": ans_bounds["x2"], "cy": ans_bounds["y2"], "label": "ans_bottom_right"},
     ])
 
+    # Recuadro de Nombre y Firma del postulante (informativo, no se lee por OMR)
+    if recuadro_firma:
+        _draw_recuadro_firma(c)
+
     c.save()
     return buffer.getvalue(), coords
+
+
+def _draw_recuadro_firma(c):
+    """Recuadro al pie de la hoja para que el postulante anote su Nombre y
+    Firma. Es solo informativo: el OMR ignora esta zona (queda fuera del
+    área de burbujas y de las marcas de esquina)."""
+    box_h = 34
+    y0 = MB
+    x1 = ML
+    x2 = PAGE_W - MR
+    c.setStrokeColor(black)
+    c.setLineWidth(1.0)
+    c.rect(x1, y0, x2 - x1, box_h, stroke=1, fill=0)
+
+    mitad = x1 + (x2 - x1) / 2
+    label_y = y0 + box_h - 10
+    line_y = y0 + 9
+    c.setFont(FH, 7)
+    c.drawString(x1 + 8, label_y, "NOMBRE:")
+    c.drawString(mitad + 8, label_y, "FIRMA:")
+    c.setLineWidth(0.5)
+    c.line(x1 + 52, line_y, mitad - 12, line_y)
+    c.line(mitad + 46, line_y, x2 - 12, line_y)
+    c.setFillColor(black)
 
 
 def _draw_corner_marks(c, size=CORNER_SIZE):
@@ -350,13 +399,17 @@ def _draw_corner_marks(c, size=CORNER_SIZE):
         c.rect(x0, y0, size, size, stroke=0, fill=1)
 
 
-def _draw_answers_cols(c, x_start, y_start, preguntas, coords: dict = None, width: float = None, n_cols: int = 4, row_step: float = 18.0, respuestas_correctas: Dict = None):
+def _draw_answers_cols(c, x_start, y_start, preguntas, coords: dict = None, width: float = None, n_cols: int = 4, row_step: float = 18.0, respuestas_correctas: Dict = None, lineas_separadoras: bool = True):
     """Respuestas en N columnas con headers dinámicos (máx. 5).
     Cada pregunta dibuja solo las burbujas que realmente tiene (2–5),
     alineadas a la izquierda en los slots fijos A–E.
     Si coords se proporciona, registra las coordenadas de cada burbuja.
     Si respuestas_correctas={num: [idx,...]} se proporciona, esas burbujas se
-    dibujan rellenas (hoja de resultados/clave)."""
+    dibujan rellenas (hoja de resultados/clave).
+    Si lineas_separadoras=True, entre filas consecutivas se dibuja una línea
+    gris clara a mitad de camino: queda fuera del interior muestreado (0.75r)
+    y apenas roza el anillo (1.30r–1.85r), sin afectar la decisión de
+    contraste del lector (umbral 22; el aporte de la línea es <3 niveles)."""
     total = len(preguntas)
     per_col = (total + n_cols - 1) // n_cols
 
@@ -391,6 +444,15 @@ def _draw_answers_cols(c, x_start, y_start, preguntas, coords: dict = None, widt
         c.setStrokeColor(black)
         c.setLineWidth(0.3)
         c.line(col_x, header_y - 5, col_x + col_w - 6, header_y - 5)
+
+        # Líneas separadoras sutiles entre filas de preguntas (ayuda visual).
+        for q_idx in range(max(0, len(col_qs) - 1)):
+            sep_y = header_y - 18 - q_idx * row_step - row_step / 2.0
+            c.setStrokeColorRGB(0.82, 0.82, 0.82)
+            c.setLineWidth(0.3)
+            c.line(col_x, sep_y, col_x + col_w - 6, sep_y)
+        c.setStrokeColor(black)
+        c.setLineWidth(0.5)
 
         for q_idx in range(len(col_qs)):
             global_num = start + q_idx + 1
@@ -605,7 +667,7 @@ def _build_question_blocks(c, preguntas: list, col_w: float) -> List[dict]:
     return blocks
 
 
-def generar_hoja_preguntas(evaluacion_nombre: str, identificador: str, preguntas: list, descripcion: str = "") -> Tuple[bytes, Dict]:
+def generar_hoja_preguntas(evaluacion_nombre: str, identificador: str, preguntas: list, descripcion: str = "", fecha: str = None) -> Tuple[bytes, Dict]:
     """Genera hoja de preguntas con instrucciones de llenado + opciones en vertical.
 
     Layout: las columnas se llenan por página (izquierda completa, luego derecha),
@@ -634,7 +696,7 @@ def generar_hoja_preguntas(evaluacion_nombre: str, identificador: str, preguntas
         c.setFont(FB, 8)
         c.drawString(ML, y - 22, descripcion[:70])
     c.setFont(FB, 8)
-    c.drawString(ML, y - 34, f"Identificador: {identificador}     Fecha: {date.today().strftime('%d/%m/%Y')}")
+    c.drawString(ML, y - 34, f"Identificador: {identificador}     Fecha: {_fecha_impresa(fecha)}")
     y -= 42
 
     c.setStrokeColor(black)

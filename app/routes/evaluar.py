@@ -3,6 +3,7 @@ import json
 import base64
 import hashlib
 import logging
+import math
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,7 +20,7 @@ from app.services.omr_processor import (
     preprocess_image, detect_corner_marks, apply_perspective_transform,
     _find_header_boundary, _group_into_rows, is_bubble_filled,
     detect_qr_codes, enderezar_imagen,
-    leer_respuestas_con_coords, leer_id_con_coords
+    leer_respuestas_con_coords, leer_id_con_coords, leer_id_con_circulos
 )
 from app.services.sheet_generator import generar_pdf_revisado, cargar_coordenadas, generar_hoja_respuestas
 from app.routes.generar import _aplicar_snapshot, _construir_preguntas_list, _extraer_correctas
@@ -348,6 +349,7 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
     no contiene un QR resoluble."""
     # QR de esta página
     qr_data_list = detect_qr_codes(image)
+    logger.info(f"[eval] pág {numero_pagina}: img={image.shape[1]}x{image.shape[0]}, QR detectado(s)={qr_data_list}")
 
     if not qr_data_list:
         raise HTTPException(status_code=400, detail="Página sin código QR")
@@ -405,6 +407,10 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
 
     # El identificador explícito del request tiene prioridad (permite desambiguar variantes)
     identificador = data.identificador or identificador
+    logger.info(
+        f"[eval] pág {numero_pagina}: evaluación='{evaluacion.nombre}' ({evaluacion.id}), "
+        f"identificador='{identificador}'"
+    )
 
     evaluacion_id = evaluacion.id
     if not evaluacion:
@@ -432,6 +438,11 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
             preguntas = _aplicar_snapshot(db, evaluacion_id, preguntas, hoja_escaneada.preguntas_orden)
             orden_personalizado = True
 
+    logger.info(
+        f"[eval] pág {numero_pagina}: preguntas_tras_snapshot={len(preguntas)}, "
+        f"orden_personalizado={orden_personalizado}, hoja_en_bd={hoja_escaneada is not None}"
+    )
+
     # Build correct answers map: question_index -> list of correct option indices
     correct_answers = {}
     option_labels = ["A", "B", "C", "D", "E"]
@@ -448,8 +459,20 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
     # interpolaciones) mapeando hoja->imagen con la similitud A invertida.
     image_original = image
     image, transform = enderezar_imagen(image)
-    print(f"[DEBUG] Página {numero_pagina}: enderezada={transform['enderezada']}, "
-          f"ángulo={transform.get('angulo', 0):.2f}°, A={'sí' if transform.get('A') is not None else 'no'}")
+    _A = transform.get("A")
+    if _A is not None:
+        _escala = math.hypot(_A[0, 0], _A[0, 1])
+        _traslacion = (round(_A[0, 2], 1), round(_A[1, 2], 1))
+        _matriz_str = "[" + ",".join(f"{v:.4f}" for v in _A.reshape(-1)) + "]"
+    else:
+        _escala, _traslacion, _matriz_str = None, None, "None"
+    logger.info(
+        f"[eval] pág {numero_pagina}: img_original={image_original.shape[1]}x{image_original.shape[0]}, "
+        f"img_nivelada={image.shape[1]}x{image.shape[0]}, "
+        f"enderezada={transform['enderezada']}, origen={transform.get('origen')}, "
+        f"ángulo={transform.get('angulo', 0):.2f}°, escala={_escala}, traslación={_traslacion}, "
+        f"A=[{_matriz_str}]"
+    )
 
     # Coordenadas conocidas de esta hoja (identificada por QR)
     coords_hoja = None
@@ -462,8 +485,14 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
             try:
                 with open(_coords_path) as f:
                     coords_hoja = json.load(f)
+                logger.info(f"[eval] pág {numero_pagina}: coords cargadas desde {_coords_path} "
+                            f"(page={coords_hoja.get('page')}, scale={coords_hoja.get('scale_factor')}, "
+                            f"burbujas={len(coords_hoja.get('answer_bubbles', []))}, "
+                            f"id_grid={len(coords_hoja.get('id_grid', []))})")
             except Exception as e:
                 logger.error(f"Error cargando coordenadas de la hoja: {e}")
+        else:
+            logger.warning(f"[eval] pág {numero_pagina}: no existe coordenadas.json en {_coords_path}")
 
     # Lectura determinista muestreando las coordenadas conocidas; fallback a
     # detección genérica (HoughCircles/contornos) si no hay coordenadas
@@ -474,26 +503,43 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
             detected_multi = leer_respuestas_con_coords(
                 image_original, coords_hoja, transform, len(preguntas)
             )
-            identificador_persona = leer_id_con_coords(image_original, coords_hoja, transform)
+            # ID: primero por detección de círculos en el grid (independiente de
+            # la traslación del QR, que desvía la malla tupida); replicamos por
+            # coordenadas y preferimos el que lea más dígitos concretos.
+            id_por_circulos = leer_id_con_circulos(image_original)
+            id_por_coords = leer_id_con_coords(image_original, coords_hoja, transform)
+            def _dto_score(id_): return sum(1 for ch in id_ if ch.isdigit())
+            if _dto_score(id_por_circulos) > _dto_score(id_por_coords):
+                identificador_persona = id_por_circulos
+            else:
+                identificador_persona = id_por_coords
+            logger.info(
+                f"[eval] pág {numero_pagina}: lectura por coords -> ID(círculos)='{id_por_circulos}', "
+                f"ID(coords)='{id_por_coords}' -> usado='{identificador_persona}', marcas={detected_multi}"
+            )
         except Exception as e:
             logger.error(f"Lectura por coordenadas falló: {e}")
             detected_multi = None
 
     if detected_multi is not None:
-        print(f"[DEBUG] Página {numero_pagina}: lectura por coordenadas conocidas")
+        logger.info(f"[eval] pág {numero_pagina}: lectura por coordenadas conocidas")
     else:
         num_options = max(len(p.opciones) for p in preguntas) if preguntas else 5
         detected_answers = detect_answer_bubbles(image, len(preguntas), num_options)
         detected_multi = [[d] if d is not None else [] for d in detected_answers]
         identificador_persona = detect_identifier_section(image)
-        print(f"[DEBUG] Página {numero_pagina}: detección genérica (HoughCircles)")
+        logger.info(
+            f"[eval] pág {numero_pagina}: detección genérica (HoughCircles) -> ID='{identificador_persona}', "
+            f"marcas={detected_multi}"
+        )
 
     detected_answers = [m[0] if m else None for m in detected_multi]
-    print(f"[DEBUG] Result: ID='{identificador_persona}', "
-          f"answers={sum(1 for a in detected_answers if a is not None)}/{len(detected_answers)}")
+    logger.info(f"[eval] pág {numero_pagina}: resultado ID='{identificador_persona}', "
+                f"answers={sum(1 for a in detected_answers if a is not None)}/{len(detected_answers)}")
 
     # Grade each question
     respuestas_detalle = []
+    errores_revision: List[str] = []
     total_puntos = 0.0
     respuestas_correctas = 0
 
@@ -503,20 +549,48 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
         correct = correct_answers.get(idx, [])
         correct_set = set(correct)
 
-        # For single-answer questions: check if detected is in correct list
-        # For multiple-answer questions: check if ALL correct answers are marked
+        n_correctas = len(correct_set)
+        n_marcadas = len(detected_set)
+        puntos = 0.0
         es_correcta = False
-        if correct_set and detected_set:
-            if len(correct_set) == 1:
-                # Single answer: detected answer must be the correct one
-                es_correcta = detected_set & correct_set == correct_set
-            else:
-                # Multiple answers: all correct answers must be marked
-                es_correcta = detected_set == correct_set
 
-        puntos = p.puntos if es_correcta else 0.0
+        if correct_set and detected_set:
+            if n_marcadas > n_correctas:
+                # Marcó más opciones de las esperadas (p.ej. todas las burbujas):
+                # la respuesta queda inválida y se avisa para revisión manual.
+                marcadas_txt = ",".join(
+                    option_labels[i] for i in sorted(detected_set) if i < len(option_labels)
+                )
+                errores_revision.append(
+                    f"{p.nombre}: se marcaron {n_marcadas} opciones ({marcadas_txt}) "
+                    f"cuando se esperan {n_correctas} - revisión manual"
+                )
+            elif n_correctas == 1:
+                # Single answer: only exact match counts (nada de superset)
+                es_correcta = detected_set == correct_set
+            else:
+                # Multiple: full points only if exact; otherwise prorrateo por aciertos
+                correctas_marcadas = len(detected_set & correct_set)
+                es_correcta = detected_set == correct_set
+                if correctas_marcadas:
+                    puntos = p.puntos * (correctas_marcadas / n_correctas)
+                else:
+                    puntos = 0.0
+
+        puntos = p.puntos if es_correcta else puntos
 
         respuesta_texto = ",".join(option_labels[i] for i in sorted(detected_set) if i < len(option_labels)) if detected_set else None
+
+        ambigua = False
+        if detected_set and n_marcadas > n_correctas:
+            ambigua = True
+
+        correctas_txt = ",".join(option_labels[i] for i in sorted(correct_set) if i < len(option_labels)) if correct_set else "-"
+        logger.info(
+            f"[eval] pág {numero_pagina}: pregunta {idx + 1} '{p.nombre}': "
+            f"correcta(s)=[{correctas_txt}], marcada(s)=[{respuesta_texto or '-'}], "
+            f"n={n_marcadas}/{n_correctas}, es_correcta={es_correcta}, puntos={puntos}, ambigua={ambigua}"
+        )
 
         total_puntos += puntos
         if es_correcta:
@@ -527,7 +601,8 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
             nombre=p.nombre,
             respuesta=respuesta_texto,
             es_correcta=es_correcta,
-            puntos_obtenidos=puntos
+            puntos_obtenidos=puntos,
+            ambigua=ambigua
         ))
 
     # Create resultado
@@ -537,7 +612,8 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
         identificador_persona=identificador_persona,
         puntuacion_total=total_puntos,
         total_preguntas=len(preguntas),
-        respuestas_correctas=respuestas_correctas
+        respuestas_correctas=respuestas_correctas,
+        errores=errores_revision or None
     )
     db.add(resultado)
     db.flush()
@@ -549,6 +625,12 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
 
     db.commit()
     db.refresh(resultado)
+
+    logger.info(
+        f"[eval] pág {numero_pagina}: persistido resultado {resultado.id} - "
+        f"puntos={total_puntos}, correctas={respuestas_correctas}/{len(preguntas)}, "
+        f"errores_revision={errores_revision or '-'}"
+    )
 
     # Generate reviewed PDF
     respuestas_data = []
@@ -574,8 +656,10 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
     annotated_base64 = None
     try:
         annotated_base64 = _generate_annotated_image(
-            image, detected_answers, correct_answers, identificador_persona,
-            coords=None, detected_multi=detected_multi
+            image_original, detected_answers, correct_answers, identificador_persona,
+            coords=coords_hoja, transform=transform, detected_multi=detected_multi,
+            puntos_detalle=[rd.puntos_obtenidos for rd in respuestas_detalle],
+            total_puntos=total_puntos,
         )
     except Exception as e:
         logger.error(f"Error generando imagen anotada: {e}")
@@ -639,13 +723,19 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
             "pagina": numero_pagina,
             "enderezada": transform["enderezada"],
             "lectura_por_coords": coords_hoja is not None and detected_multi is not None,
-            "qr_codes": qr_data_list
+            "qr_codes": qr_data_list,
+            "errores": errores_revision
         }
         metadata_path = os.path.join(storage_dir, "metadata.json")
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2, default=str)
     except Exception as e:
         logger.error(f"Error guardando metadata: {e}")
+
+    logger.info(
+        f"[eval] pág {numero_pagina}: Ø completo -> storage={storage_dir}, "
+        f"lectura_por_coords={coords_hoja is not None and detected_multi is not None}"
+    )
 
     return ResultadoResponse(
         resultado_id=resultado.id,
@@ -660,14 +750,16 @@ def _evaluar_pagina(db: Session, data: EvaluarRequest, raw_data: str, is_pdf: bo
                 pregunta_id=rd.pregunta_id,
                 respuesta=rd.respuesta,
                 es_correcta=rd.es_correcta,
-                puntos_obtenidos=rd.puntos_obtenidos
+                puntos_obtenidos=rd.puntos_obtenidos,
+                ambigua=rd.ambigua
             )
             for rd in respuestas_detalle
         ],
         pdf_revisado_base64=pdf_revisado_base64,
         imagen_anotada_base64=annotated_base64,
         qr_codes=qr_data_list,
-        storage_path=storage_dir
+        storage_path=storage_dir,
+        errores=errores_revision
     )
 
 
@@ -800,12 +892,14 @@ def obtener_resultado(resultado_id: UUID, db: Session = Depends(get_db)):
                 pregunta_id=rd.pregunta_id,
                 respuesta=rd.respuesta,
                 es_correcta=rd.es_correcta,
-                puntos_obtenidos=rd.puntos_obtenidos
+                puntos_obtenidos=rd.puntos_obtenidos,
+                ambigua=rd.ambigua
             )
             for rd in respuestas
         ],
         pdf_revisado_base64=pdf_revisado_base64,
         imagen_anotada_base64=imagen_anotada_base64,
+        errores=resultado.errores or []
     )
 
 
@@ -850,11 +944,16 @@ def _generate_annotated_image(
     correct_answers: dict,
     identificador_persona: str,
     coords: dict = None,
+    transform: dict = None,
     detected_multi: list = None,
+    puntos_detalle: list = None,
+    total_puntos: float = None,
 ) -> str:
     """
     Genera imagen anotada con V/X sobre cada burbuja.
     Si coords está disponible, usa coordenadas conocidas para posicionar marcas.
+    Muestra el puntaje por pregunta bajo cada fila y el total (suma) centrado
+    arriba si se provee puntos_detalle/total_puntos.
     """
     annotated = image.copy()
     h, w = annotated.shape[:2]
@@ -878,12 +977,35 @@ def _generate_annotated_image(
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, GREEN, 2)
     cv2.putText(annotated, f"Correctas: {correctas}/{total}",
                 (w - 300, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, GREEN, 2)
+    if total_puntos is not None:
+        total_txt = f"TOTAL: {total_puntos:g} pts"
+        (tw, th), _ = cv2.getTextSize(total_txt, cv2.FONT_HERSHEY_SIMPLEX, 1.1, 3)
+        cv2.putText(annotated, total_txt,
+                    ((w - tw) // 2, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.1, GREEN, 3)
+
+    def _dibujar_puntaje_pregunta(qi: int, x_izq: int, y_centro: int):
+        """Dibuja el puntaje al lado izquierdo del bloque de burbujas, un poco
+        más abajo que el centro, con fuente grande sobre fondo negro."""
+        if puntos_detalle is None or qi >= len(puntos_detalle):
+            return
+        pts = puntos_detalle[qi]
+        txt = f"{pts:g}pt"
+        color = GREEN if pts > 0 else RED
+        font_scale = 0.8
+        thickness = 2
+        (tw_, th_), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
+        text_x = x_izq - tw_ - 6
+        text_y = int(y_centro + 28 + th_ / 2)
+        if text_x < 4:
+            # Sin espacio a la izquierda: dibujar a la derecha del bloque
+            text_x = x_izq + 6
+        cv2.putText(annotated, txt, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
 
     if coords and coords.get("answer_bubbles"):
         # === USAR COORDENADAS CONOCIDAS ===
-        scale_factor = coords.get("scale_factor", 3)
-        scale = _compute_scale(coords, image.shape)
-        ratio = scale / scale_factor
+        from app.services.omr_processor import _inv_A
+        A = (transform or {}).get("A")
 
         # Group answer bubbles by question_index
         questions = {}
@@ -902,11 +1024,19 @@ def _generate_annotated_image(
                 continue
 
             q_bubbles = sorted(questions[qi], key=lambda b: b["option_index"])
-
+            xs_q, ys_q, rs_q = [], [], []
             for b in q_bubbles:
-                cx = int(b["cx_img"] * ratio)
-                cy = int(b["cy_img"] * ratio)
-                r_img = max(5, int(b["r_img"] * ratio))
+                if A is not None:
+                    cx, cy = _inv_A(A, b["cx_img"], b["cy_img"])
+                    cx, cy = int(round(cx)), int(round(cy))
+                    r_img = max(5, int(b["r_img"] / math.hypot(A[0, 0], A[0, 1])))
+                else:
+                    scale_factor = coords.get("scale_factor", 3)
+                    scale = _compute_scale(coords, image.shape)
+                    ratio = scale / scale_factor
+                    cx = int(b["cx_img"] * ratio)
+                    cy = int(b["cy_img"] * ratio)
+                    r_img = max(5, int(b["r_img"] * ratio))
                 opt_idx = b["option_index"]
 
                 is_correct = opt_idx in correct_set
@@ -925,6 +1055,18 @@ def _generate_annotated_image(
                 elif not is_marked and is_correct and detected_set:
                     # Respuesta correcta no marcada: amarillo
                     cv2.circle(annotated, (cx, cy), r_img + 4, YELLOW, 2)
+
+                xs_q.append(cx)
+                ys_q.append(cy)
+                rs_q.append(r_img)
+
+            # Puntaje de la pregunta al lado izquierdo del bloque de burbujas
+            if xs_q and puntos_detalle is not None and qi < len(puntos_detalle):
+                _dibujar_puntaje_pregunta(
+                    qi,
+                    min(xs_q) - max(rs_q),
+                    int(sum(ys_q) / len(ys_q)),
+                )
     else:
         # === FALLBACK: usar HoughCircles para encontrar burbujas ===
         from app.services.omr_processor import _detect_bubbles_hough, _find_header_boundary, _group_into_rows
@@ -978,6 +1120,11 @@ def _generate_annotated_image(
                         elif is_correct_answer and detected is not None:
                             cv2.circle(annotated, (cx, cy), 18, YELLOW, 2)
 
+                    _dibujar_puntaje_pregunta(
+                        q_idx,
+                        int(row_sorted[0][0]) - 18,
+                        int(row_sorted[0][1]),
+                    )
                     q_idx += 1
 
     _, buffer = cv2.imencode(".png", annotated)

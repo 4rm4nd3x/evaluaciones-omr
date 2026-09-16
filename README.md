@@ -3,24 +3,50 @@
 Servicio de evaluaciones con reconocimiento óptico de marcas (OMR) en Python.
 Permite generar hojas de respuestas, escanearlas y evaluarlas automáticamente.
 
+## Bondades
+
+- **Fin del llenado manual de calificaciones**: se imprime la hoja, el estudiante
+  marca burbujas con lápiz y al escanearla el sistema lee, califica y genera la
+  nota y el PDF revisado solo.
+- **Tolerante a fotos y escaneos reales**: funciona con imágenes oscuras,
+  inclinadas (hasta ~±7° vía marcas de esquina) y de baja calidad, gracias a la
+  lectura por **contraste local** (anillo − interior) en lugar de umbrales de gris.
+- **Precisión por coordenadas conocidas**: al generar cada hoja se guardan las
+  posiciones exactas de las burbujas (`coordenadas.json`); la lectura mapea esas
+  coordenadas a la imagen original con la transformación estimada, sin interpolación.
+- **Variantes aleatorias consistentes**: cada hoja guarda su snapshot de orden de
+  preguntas; al escanear, el QR resuelve la variante correcta y las respuestas se
+  califican contra el orden impreso, con reimpresión estable del mismo identificador.
+- **Scoring justo**: preguntas *single* puntúan solo por coincidencia exacta; las
+  *multiple* prorratean por aciertos; los casos dudosos (todas las burbujas marcadas,
+  ambigüedades) no se puntúan y se marcan `errores` para revisión manual.
+- **Lectura robusta del ID persona**: el grid 10×10 se localiza por detección de
+  círculos (no depende del ancla QR) y se combina con la lectura por coordenadas.
+- **Diagnóstico completo**: logs detallados por página (transformación, contrastes
+  por burbuja, scoring) y `metadata.json` por escaneo, además de la imagen anotada
+  con V/X, puntaje por pregunta y total.
+- **Flujo integral**: banco de preguntas por secciones, generación de PDFs (hoja de
+  respuestas, hoja de preguntas y clave), evaluación por lote (multi-página, incluso
+  mezclando evaluaciones) y API REST documentada.
+
 ## Arquitectura
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    FastAPI Server                     │
+│                    FastAPI Server                   │
 ├──────────┬──────────┬───────────┬───────────────────┤
-│evaluar   │generar   │evaluacion │      app/main.py   │
+│evaluar   │generar   │evaluacion │      app/main.py  │
 │.py       │.py       │es.py      │                   │
 │generica  │          │           │                   │
 │.py       │          │           │                   │
 ├──────────┴──────────┴───────────┤                   │
-│        services/                 │                   │
+│        services/                │                   │
 │  ┌─────────────┐ ┌────────────┐ │                   │
 │  │omr_processor│ │sheet_gen.  │ │                   │
 │  │(detección)  │ │(PDF+coords)│ │                   │
 │  └─────────────┘ └────────────┘ │                   │
 ├─────────────────────────────────┤                   │
-│        PostgreSQL + Storage      │                   │
+│        PostgreSQL + Storage     │                   │
 └─────────────────────────────────┴───────────────────┘
 ```
 
@@ -104,8 +130,9 @@ docker-compose down
 ```
 
 La app crea/migra las tablas automaticamente al arrancar (idempotente, no borra datos).
-Los PDFs generados se conservan en el volumen `evaluaciones_data` (o bind mount `./storage`
-si se descomenta esa linea en docker-compose.yml).
+Los PDFs generados se conservan en el bind mount `./storage` (por defecto
+`/opt/archivos/omr:/data` en docker-compose.yml) o en el volumen `evaluaciones_data`
+según se configure.
 
 ### Docker solo la app (sin compose)
 
@@ -129,7 +156,7 @@ docker run -p 8000:8000 \
 | `STORAGE_PATH` | Directorio para archivos generados | `/home/armando/archivos` |
 | `API_HOST` | Host del servidor | `0.0.0.0` |
 | `API_PORT` | Puerto del servidor | `8000` |
-| `DEBUG` | Modo debug | `false` |
+| `DEBUG` | Modo debug (nivel de log: `DEBUG` vs `INFO`) | `false` |
 
 ## API Endpoints
 
@@ -470,7 +497,8 @@ o con imagen:
           "pregunta_id": "uuid",
           "respuesta": "B",
           "es_correcta": true,
-          "puntos_obtenidos": 1.0
+          "puntos_obtenidos": 1.0,
+          "ambigua": false
         }
       ],
       "pdf_revisado_base64": "JVBERi0xLjQg...",
@@ -494,6 +522,27 @@ Notas:
   por su propio QR.
 - Las marcas de esquina permiten enderezar escaneos inclinados (hasta ~±7°);
   la metadata en storage registra `enderezada`, `angulo` y `lectura_por_coords`.
+
+#### Scoring
+
+- **Single**: puntúan solo las coincidencias exactas (no supersets).
+- **Multiple**: puntos completos solo si es exacto; en caso contrario se prorratea
+  por aciertos (`puntos × aciertos / correctas`).
+- Cada detalle incluye `ambigua` (true si se marcaron más opciones que las esperadas);
+  esos casos se descartan y se registran en `errores` para revisión manual.
+- Respuestas con **todas** las burbujas marcadas (fantasma por sombra/mala alineación)
+  se limpian y se avisan en `errores`.
+
+#### Logs de diagnóstico (`/evaluar`)
+
+Con `DEBUG=true` (o `INFO`) el servidor registra por página:
+- Datos de la imagen original/nivelada y QR detectado.
+- Transformación aplicada: origen (`qr`/`esquinas`), ángulo, escala y matriz `A`.
+- Carga de `coordenadas.json` (página, scale, nº burbujas, nº celdas de ID).
+- Contrastes por burbuja de cada pregunta (`interior`/`anillo`/`Δ`) → marcadas.
+- Contrastes por celda del grid de ID y el ID leído.
+- Resultado del scoring por pregunta (correctas vs marcadas, puntos, `ambigua`), y
+  el resumen persistido del resultado.
 
 ### Resultados
 
@@ -557,6 +606,13 @@ Detección de bordes con `cv2.findContours` + filtrado por circularidad. Funcion
 - Se marca la burbuja correspondiente al dígito deseado
 - IDs cortos: las filas sin marca se omiten (trim automático)
 
+La lectura del ID se hace por **detección de círculos** (`HoughCircles`) en la
+franja superior derecha, muestreando el **interior** de cada celda con radio reducido
+(0.5·r): la celda marcada queda mucho más oscura que las vacías. Se elige el dígito de
+cada fila por la celda más oscura (umbral de interior). Como los grids son tupidos y la
+traslación del QR puede desviarlos unos píxeles, esta estrategia no depende del ancla
+QR; se compara contra la lectura por coordenadas y se prefiere la que lea más dígitos.
+
 ### Detección de respuestas
 - Layout de **4 columnas** de preguntas (~120 preguntas por hoja; el paso vertical se compacta automáticamente si hay más filas)
 - Cada pregunta dibuja **entre 2 y 5 burbujas** en una grilla de hasta 5 posiciones
@@ -573,13 +629,17 @@ La imagen anotada muestra:
 - 🟢 **V verde** — Respuesta marcada = correcta
 - 🔴 **X rojo** — Respuesta marcada ≠ correcta
 - 🟡 **Círculo amarillo** — Respuesta correcta pero no marcada
+- **Puntaje por pregunta** al lado izquierdo de cada bloque de burbujas
+  (verde si obtuvo puntos, rojo si 0), p. ej. `0pt`, `2pt`, `1.5pt`.
+- **Total acumulado en el banner superior centrado** (`TOTAL: 8.5 pts`), más grande
+  que el resto de la cabecera.
 
 ## Layout de la hoja de respuestas
 
 ```
 ┌─                                                            ─┐
 │ L ┌────────┐  Evaluación 2026              ID PERSONA        │
-│   │  QR    │  Descripción breve          ▓▓████████▓▓       │
+│   │  QR    │  Descripción breve          ▓▓████████▓▓        │
 │   └────────┘  ID: Eva-001 Fecha: ...      ┌──────────────┐   │
 │                                           │ 0 1 2 3 4 ...│   │
 │ ┌─ INSTRUCCIONES DE LLENADO ──────────┐   │ ● ○ ○ ○ ○ ...│   │
@@ -591,11 +651,11 @@ La imagen anotada muestra:
 │ ───────────────────────────────────────────────────────────  │
 │ ▓RESPUESTAS▓                                                 │
 │ ┌──────────────────────────────────────────────────────────┐ │
-│ │ A B C D E   A B C D E    A B C D E    A B C D E         │ │
-│ │ 1.○○○○○     31.○○○○○     61.○○○○○     91.○○○○○          │ │
-│ │ 2.○○○○○     32.○○○○○     62.○○○○○     92.○○○○○          │ │
-│ │ ...                                                         │ │
-│ │30.○○○○○     60.○○○○○     90.○○○○○    120.○○○○○          │ │
+│ │ A B C D E   A B C D E    A B C D E    A B C D E          │ │
+│ │ 1.○○○○○     31.○○○○○     61.○○○○○     91.○○○○○           │ │
+│ │ 2.○○○○○     32.○○○○○     62.○○○○○     92.○○○○○           │ │
+│ │ ...                                                      │ │
+│ │30.○○○○○     60.○○○○○     90.○○○○○    120.○○○○○           │ │
 │ └──────────────────────────────────────────────────────────┘ │
 │                                                            L ┘
 ```
@@ -647,7 +707,7 @@ La imagen anotada muestra:
 evaluaciones/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py              # FastAPI app (routers + migraciones ligeras)
+│   ├── main.py              # FastAPI app (routers, migraciones ligeras, logging)
 │   ├── config.py             # Variables de entorno
 │   ├── database.py           # Conexión PostgreSQL
 │   ├── models.py             # Modelos SQLAlchemy
@@ -704,3 +764,10 @@ evaluaciones/
   `--add-host=host.docker.internal:host-gateway` con docker run)
 - Verificar que el Postgres externo acepte conexiones remotas (`listen_addresses`
   y `pg_hba.conf`)
+
+### Diagnóstico de la lectura (logs)
+- La respuesta del `/evaluar` y los logs (`docker-compose logs -f app` o `uvicorn`)
+  muestran la transformación (origen/escala/ángulo), el contraste por burbuja y el
+  scoring por pregunta; con `DEBUG=true` se agrega el contraste celda a celda del ID.
+- La metadata guardada en `STORAGE_PATH/{hash}/metadata.json` registra `enderezada`,
+  `lectura_por_coords`, `errores` y el ID leído.
